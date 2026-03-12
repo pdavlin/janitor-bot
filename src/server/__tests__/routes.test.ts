@@ -169,12 +169,12 @@ describe("HTTP server routes", () => {
   }
 
   // -------------------------------------------------------------------------
-  // GET /api/plays
+  // GET /plays
   // -------------------------------------------------------------------------
 
-  describe("GET /api/plays", () => {
+  describe("GET /plays", () => {
     test("returns plays with default pagination", async () => {
-      const res = await get("/api/plays");
+      const res = await get("/plays");
       expect(res.status).toBe(200);
 
       const body = await res.json();
@@ -185,7 +185,7 @@ describe("HTTP server routes", () => {
     });
 
     test("filters by date", async () => {
-      const res = await get("/api/plays?date=2024-04-09");
+      const res = await get("/plays?date=2024-04-09");
       const body = await res.json();
       expect(body.plays).toHaveLength(2);
       expect(body.total).toBe(2);
@@ -195,7 +195,7 @@ describe("HTTP server routes", () => {
     });
 
     test("filters by tier", async () => {
-      const res = await get("/api/plays?tier=high");
+      const res = await get("/plays?tier=high");
       const body = await res.json();
       expect(body.plays).toHaveLength(2);
       for (const play of body.plays) {
@@ -204,27 +204,27 @@ describe("HTTP server routes", () => {
     });
 
     test("filters by team matching away", async () => {
-      const res = await get("/api/plays?team=LAD");
+      const res = await get("/plays?team=LAD");
       const body = await res.json();
       expect(body.plays).toHaveLength(1);
       expect(body.plays[0].fielderName).toBe("Mookie Betts");
     });
 
     test("filters by team matching home", async () => {
-      const res = await get("/api/plays?team=PHI");
+      const res = await get("/plays?team=PHI");
       const body = await res.json();
       expect(body.plays).toHaveLength(2);
     });
 
     test("filters by position", async () => {
-      const res = await get("/api/plays?position=LF");
+      const res = await get("/plays?position=LF");
       const body = await res.json();
       expect(body.plays).toHaveLength(1);
       expect(body.plays[0].fielderName).toBe("Ronald Acuna Jr.");
     });
 
     test("filters by base", async () => {
-      const res = await get("/api/plays?base=Home");
+      const res = await get("/plays?base=Home");
       const body = await res.json();
       expect(body.plays).toHaveLength(2);
       for (const play of body.plays) {
@@ -233,14 +233,14 @@ describe("HTTP server routes", () => {
     });
 
     test("filters by fielder substring", async () => {
-      const res = await get("/api/plays?fielder=Betts");
+      const res = await get("/plays?fielder=Betts");
       const body = await res.json();
       expect(body.plays).toHaveLength(1);
       expect(body.plays[0].fielderName).toBe("Mookie Betts");
     });
 
     test("filters by date range from/to", async () => {
-      const res = await get("/api/plays?from=2024-04-10&to=2024-04-10");
+      const res = await get("/plays?from=2024-04-10&to=2024-04-10");
       const body = await res.json();
       expect(body.plays).toHaveLength(2);
       for (const play of body.plays) {
@@ -249,14 +249,14 @@ describe("HTTP server routes", () => {
     });
 
     test("pagination with limit and offset", async () => {
-      const res = await get("/api/plays?limit=2&offset=0");
+      const res = await get("/plays?limit=2&offset=0");
       const body = await res.json();
       expect(body.plays).toHaveLength(2);
       expect(body.total).toBe(4);
       expect(body.limit).toBe(2);
       expect(body.offset).toBe(0);
 
-      const res2 = await get("/api/plays?limit=2&offset=2");
+      const res2 = await get("/plays?limit=2&offset=2");
       const body2 = await res2.json();
       expect(body2.plays).toHaveLength(2);
       expect(body2.total).toBe(4);
@@ -264,35 +264,35 @@ describe("HTTP server routes", () => {
     });
 
     test("total count is independent of limit", async () => {
-      const res = await get("/api/plays?limit=1");
+      const res = await get("/plays?limit=1");
       const body = await res.json();
       expect(body.plays).toHaveLength(1);
       expect(body.total).toBe(4);
     });
 
     test("invalid tier returns 400", async () => {
-      const res = await get("/api/plays?tier=ultra");
+      const res = await get("/plays?tier=ultra");
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.error).toContain("tier");
     });
 
     test("invalid position returns 400", async () => {
-      const res = await get("/api/plays?position=SS");
+      const res = await get("/plays?position=SS");
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.error).toContain("position");
     });
 
     test("invalid base returns 400", async () => {
-      const res = await get("/api/plays?base=1B");
+      const res = await get("/plays?base=1B");
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.error).toContain("base");
     });
 
     test("invalid limit returns 400", async () => {
-      const res = await get("/api/plays?limit=-5");
+      const res = await get("/plays?limit=-5");
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.error).toContain("limit");
@@ -300,10 +300,10 @@ describe("HTTP server routes", () => {
   });
 
   // -------------------------------------------------------------------------
-  // GET /api/plays/today
+  // GET /plays/today
   // -------------------------------------------------------------------------
 
-  describe("GET /api/plays/today", () => {
+  describe("GET /plays/today", () => {
     test("returns plays for today's date", async () => {
       // Insert a play dated today
       const todayStr = new Date().toISOString().slice(0, 10);
@@ -315,7 +315,7 @@ describe("HTTP server routes", () => {
       });
       insertPlays(db, [todayPlay]);
 
-      const res = await get("/api/plays/today");
+      const res = await get("/plays/today");
       const body = await res.json();
 
       // All returned plays should have today's date
@@ -328,44 +328,44 @@ describe("HTTP server routes", () => {
   });
 
   // -------------------------------------------------------------------------
-  // GET /api/plays/:id
+  // GET /plays/:id
   // -------------------------------------------------------------------------
 
-  describe("GET /api/plays/:id", () => {
+  describe("GET /plays/:id", () => {
     test("returns single play by id", async () => {
       // Get a valid id from the database
-      const allRes = await get("/api/plays?limit=1");
+      const allRes = await get("/plays?limit=1");
       const allBody = await allRes.json();
       const knownId = allBody.plays[0].id;
 
-      const res = await get(`/api/plays/${knownId}`);
+      const res = await get(`/plays/${knownId}`);
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.id).toBe(knownId);
     });
 
     test("returns 404 for non-existent id", async () => {
-      const res = await get("/api/plays/99999");
+      const res = await get("/plays/99999");
       expect(res.status).toBe(404);
       const body = await res.json();
       expect(body.error).toContain("not found");
     });
 
     test("returns 400 for non-numeric id", async () => {
-      const res = await get("/api/plays/abc");
+      const res = await get("/plays/abc");
       // The route regex only matches digits, so "abc" won't match
-      // /api/plays/:id and will fall through to 404
+      // /plays/:id and will fall through to 404
       expect(res.status).toBe(404);
     });
   });
 
   // -------------------------------------------------------------------------
-  // GET /api/stats
+  // GET /stats
   // -------------------------------------------------------------------------
 
-  describe("GET /api/stats", () => {
+  describe("GET /stats", () => {
     test("returns aggregate stats", async () => {
-      const res = await get("/api/stats");
+      const res = await get("/stats");
       expect(res.status).toBe(200);
 
       const body = await res.json();
@@ -382,7 +382,7 @@ describe("HTTP server routes", () => {
     });
 
     test("stats respect date range params", async () => {
-      const res = await get("/api/stats?from=2024-04-10&to=2024-04-10");
+      const res = await get("/stats?from=2024-04-10&to=2024-04-10");
       expect(res.status).toBe(200);
 
       const body = await res.json();
@@ -395,12 +395,12 @@ describe("HTTP server routes", () => {
   });
 
   // -------------------------------------------------------------------------
-  // GET /api/health
+  // GET /health
   // -------------------------------------------------------------------------
 
-  describe("GET /api/health", () => {
+  describe("GET /health", () => {
     test("returns 200 with status, database, and scheduler info", async () => {
-      const res = await get("/api/health");
+      const res = await get("/health");
       expect(res.status).toBe(200);
 
       const body = await res.json();
@@ -423,13 +423,13 @@ describe("HTTP server routes", () => {
 
   describe("cross-cutting", () => {
     test("CORS headers present on GET responses", async () => {
-      const res = await get("/api/plays");
+      const res = await get("/plays");
       expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
       expect(res.headers.get("Access-Control-Allow-Methods")).toContain("GET");
     });
 
     test("OPTIONS returns 204 with CORS headers", async () => {
-      const res = await fetch(`${baseUrl}/api/plays`, { method: "OPTIONS" });
+      const res = await fetch(`${baseUrl}/plays`, { method: "OPTIONS" });
       expect(res.status).toBe(204);
       expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
       expect(res.headers.get("Access-Control-Allow-Methods")).toContain("GET");
@@ -439,14 +439,14 @@ describe("HTTP server routes", () => {
     });
 
     test("unknown path returns 404", async () => {
-      const res = await get("/api/nonexistent");
+      const res = await get("/nonexistent");
       expect(res.status).toBe(404);
       const body = await res.json();
       expect(body.error).toBeDefined();
     });
 
     test("POST to known path returns 405 with Allow header", async () => {
-      const res = await fetch(`${baseUrl}/api/plays`, { method: "POST" });
+      const res = await fetch(`${baseUrl}/plays`, { method: "POST" });
       expect(res.status).toBe(405);
       expect(res.headers.get("Allow")).toBe("GET, OPTIONS");
       const body = await res.json();
@@ -454,7 +454,7 @@ describe("HTTP server routes", () => {
     });
 
     test("POST to unknown path returns 404", async () => {
-      const res = await fetch(`${baseUrl}/api/nonexistent`, {
+      const res = await fetch(`${baseUrl}/nonexistent`, {
         method: "POST",
       });
       expect(res.status).toBe(404);
@@ -463,12 +463,12 @@ describe("HTTP server routes", () => {
     });
 
     test("CORS headers present on 404 responses", async () => {
-      const res = await get("/api/nonexistent");
+      const res = await get("/nonexistent");
       expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
     });
 
     test("CORS headers present on 400 responses", async () => {
-      const res = await get("/api/plays?tier=invalid");
+      const res = await get("/plays?tier=invalid");
       expect(res.status).toBe(400);
       expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
     });

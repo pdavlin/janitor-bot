@@ -184,11 +184,11 @@ function parsePlayFilters(
 
 /** Known route patterns for 405 detection. */
 const KNOWN_ROUTES: Array<RegExp | string> = [
-  "/api/plays",
-  "/api/plays/today",
-  /^\/api\/plays\/\d+$/,
-  "/api/stats",
-  "/api/health",
+  "/plays",
+  "/plays/today",
+  /^\/plays\/\d+$/,
+  "/stats",
+  "/health",
 ];
 
 /**
@@ -212,7 +212,7 @@ interface HandlerContext {
 }
 
 /**
- * GET /api/plays and GET /api/plays/today
+ * GET /plays and GET /plays/today
  *
  * Returns paginated plays matching the provided filters.
  */
@@ -235,7 +235,7 @@ function handlePlays(
   return jsonResponse({ plays, total, limit, offset });
 }
 
-/** GET /api/plays/:id */
+/** GET /plays/:id */
 function handlePlayById(ctx: HandlerContext, idSegment: string): Response {
   const id = parseNonNegativeInt(idSegment);
   if (id === null) {
@@ -250,7 +250,7 @@ function handlePlayById(ctx: HandlerContext, idSegment: string): Response {
   return jsonResponse(play);
 }
 
-/** GET /api/stats */
+/** GET /stats */
 function handleStats(ctx: HandlerContext, params: URLSearchParams): Response {
   const from = params.get("from") ?? undefined;
   const to = params.get("to") ?? undefined;
@@ -269,7 +269,7 @@ function handleStats(ctx: HandlerContext, params: URLSearchParams): Response {
   return jsonResponse(stats);
 }
 
-/** GET /api/health */
+/** GET /health */
 function handleHealth(ctx: HandlerContext): Response {
   const database = getDbStats(ctx.db, ctx.dbPath);
   const scheduler = ctx.getSchedulerStatus();
@@ -285,11 +285,11 @@ function handleHealth(ctx: HandlerContext): Response {
  *
  * Routes are matched in order:
  * 1. OPTIONS on any path (CORS preflight)
- * 2. GET /api/plays/today
- * 3. GET /api/plays/:id (numeric id)
- * 4. GET /api/plays
- * 5. GET /api/stats
- * 6. GET /api/health
+ * 2. GET /plays/today
+ * 3. GET /plays/:id (numeric id)
+ * 4. GET /plays
+ * 5. GET /stats
+ * 6. GET /health
  * 7. Everything else -> 404
  *
  * @param deps - Injected dependencies (database, logger, port, scheduler status getter)
@@ -331,37 +331,37 @@ export function startServer(deps: ServerDeps): HttpServer {
           return response;
         }
 
-        // GET /api/plays/today
-        if (pathname === "/api/plays/today") {
+        // GET /plays/today
+        if (pathname === "/plays/today") {
           response = handlePlays(ctx, url.searchParams, todayLocal());
           logRequest(logger, req.method, pathname, response.status, start);
           return response;
         }
 
-        // GET /api/plays/:id (numeric segment after /api/plays/)
-        const playByIdMatch = pathname.match(/^\/api\/plays\/(\d+)$/);
+        // GET /plays/:id (numeric segment after /plays/)
+        const playByIdMatch = pathname.match(/^\/plays\/(\d+)$/);
         if (playByIdMatch) {
           response = handlePlayById(ctx, playByIdMatch[1]);
           logRequest(logger, req.method, pathname, response.status, start);
           return response;
         }
 
-        // GET /api/plays
-        if (pathname === "/api/plays") {
+        // GET /plays
+        if (pathname === "/plays") {
           response = handlePlays(ctx, url.searchParams);
           logRequest(logger, req.method, pathname, response.status, start);
           return response;
         }
 
-        // GET /api/stats
-        if (pathname === "/api/stats") {
+        // GET /stats
+        if (pathname === "/stats") {
           response = handleStats(ctx, url.searchParams);
           logRequest(logger, req.method, pathname, response.status, start);
           return response;
         }
 
-        // GET /api/health
-        if (pathname === "/api/health") {
+        // GET /health
+        if (pathname === "/health") {
           response = handleHealth(ctx);
           logRequest(logger, req.method, pathname, response.status, start);
           return response;

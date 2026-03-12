@@ -1,13 +1,25 @@
 services:
   janitor-bot:
     build: .
-    ports:
-      - "${PORT:-3000}:${PORT:-3000}"
     volumes:
       - janitor-data:/data
     env_file:
       - .env
     restart: unless-stopped
+    networks:
+      - traefik_public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik_public"
+      - "traefik.http.routers.janitor-bot.rule=Host(`api.davlin.io`) && PathPrefix(`/janitor-bot/v1`)"
+      - "traefik.http.routers.janitor-bot.entrypoints=https"
+      - "traefik.http.middlewares.janitor-bot-strip.stripprefix.prefixes=/janitor-bot/v1"
+      - "traefik.http.routers.janitor-bot.middlewares=janitor-bot-strip"
+      - "traefik.http.services.janitor-bot.loadbalancer.server.port=3000"
+
+networks:
+  traefik_public:
+    external: true
 
 volumes:
   janitor-data:
