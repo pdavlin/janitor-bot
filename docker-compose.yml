@@ -1,0 +1,13 @@
+services:
+  janitor-bot:
+    build: .
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    volumes:
+      - janitor-data:/data
+    env_file:
+      - .env
+    restart: unless-stopped
+
+volumes:
+  janitor-data:
