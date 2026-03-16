@@ -13,17 +13,10 @@
  *   DB_PATH - path to SQLite database file (default: ./janitor-throws.db)
  */
 
-import {
-  fetchLiveFeed,
-  MlbApiError,
-} from "../api/mlb-client";
-import { detectOutfieldAssists } from "../detection/detect";
+import { fetchLiveFeed, MlbApiError } from "../api/mlb-client";
 import type { DetectedPlay } from "../types/play";
-import { matchVideoToPlay } from "../detection/video-match";
-import { calculateTier } from "../detection/ranking";
-import { fetchGameContent } from "../api/mlb-client";
 import { createDatabase, insertPlays } from "../storage/db";
-import { scanDate } from "../pipeline";
+import { processGame, scanDate } from "../pipeline";
 import { createLogger } from "../logger";
 
 const logger = createLogger("info");
@@ -171,43 +164,8 @@ async function scanSingleGame(
   console.log(`${awayAbbr} @ ${homeAbbr}\n`);
 
   const gameDate = dateOverride ?? liveFeed.gameData.datetime?.officialDate ?? formatDate(new Date());
-  const plays = detectOutfieldAssists(liveFeed, gamePk, gameDate);
 
-  if (plays.length === 0) {
-    return [];
-  }
-
-  // Enrich with video URLs
-  try {
-    const content = await fetchGameContent(gamePk);
-
-    for (const play of plays) {
-      const match = matchVideoToPlay(content, {
-        fielderId: play.fielderId,
-        description: play.description,
-      });
-
-      if (match) {
-        play.videoUrl = match.videoUrl;
-        play.videoTitle = match.videoTitle;
-      }
-    }
-  } catch (err) {
-    logger.warn("could not fetch video content for game", {
-      gamePk,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-
-  for (const play of plays) {
-    play.tier = calculateTier({
-      targetBase: play.targetBase,
-      creditChain: play.creditChain,
-      hasVideo: play.videoUrl !== null,
-    });
-  }
-
-  return plays;
+  return processGame(gamePk, gameDate, logger);
 }
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import {
 import { detectOutfieldAssists } from "./detection/detect";
 import type { DetectedPlay } from "./types/play";
 import { matchVideoToPlay } from "./detection/video-match";
+import { extractPlayId, fetchSavantVideo } from "./detection/savant-video";
 import { calculateTier } from "./detection/ranking";
 import type { Logger } from "./logger";
 
@@ -63,27 +64,45 @@ export async function processGame(
     return [];
   }
 
-  // Video matching is best-effort. A content fetch failure should not
-  // discard the detected plays themselves.
-  try {
-    const content = await fetchGameContent(gamePk);
-
-    for (const play of plays) {
-      const match = matchVideoToPlay(content, {
-        fielderId: play.fielderId,
-        description: play.description,
-      });
-
-      if (match) {
-        play.videoUrl = match.videoUrl;
-        play.videoTitle = match.videoTitle;
+  // Savant video matching (primary source) - fetches are independent, run in parallel
+  await Promise.all(
+    plays.map(async (play) => {
+      const liveFeedPlay = liveFeed.liveData.plays.allPlays.find(
+        (p) => p.about.atBatIndex === play.playIndex
+      );
+      const playId = extractPlayId(liveFeedPlay?.playEvents);
+      if (!playId) return;
+      const savantVideo = await fetchSavantVideo(playId, logger);
+      if (savantVideo) {
+        play.videoUrl = savantVideo.videoUrl;
+        play.videoTitle = savantVideo.videoTitle;
       }
+    })
+  );
+
+  // Content API fallback for plays still missing video
+  const playsNeedingVideo = plays.filter((p) => !p.videoUrl);
+  if (playsNeedingVideo.length > 0) {
+    try {
+      const content = await fetchGameContent(gamePk);
+
+      for (const play of playsNeedingVideo) {
+        const match = matchVideoToPlay(content, {
+          fielderId: play.fielderId,
+          description: play.description,
+        });
+
+        if (match) {
+          play.videoUrl = match.videoUrl;
+          play.videoTitle = match.videoTitle;
+        }
+      }
+    } catch (err) {
+      logger.warn("could not fetch video content for game", {
+        gamePk,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-  } catch (err) {
-    logger.warn("could not fetch video content for game", {
-      gamePk,
-      error: err instanceof Error ? err.message : String(err),
-    });
   }
 
   for (const play of plays) {

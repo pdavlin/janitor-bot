@@ -150,11 +150,17 @@ export interface Runner {
   credits?: RunnerCredit[];
 }
 
+export interface PlayEvent {
+  isPitch: boolean;
+  playId?: string;
+}
+
 export interface Play {
   about: PlayAbout;
   result: PlayResult;
   matchup: PlayMatchup;
   runners: Runner[];
+  playEvents?: PlayEvent[];
 }
 
 export interface BoxscorePlayerEntry {
