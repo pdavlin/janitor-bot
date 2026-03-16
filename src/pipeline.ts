@@ -15,6 +15,7 @@ import {
 import { detectOutfieldAssists } from "./detection/detect";
 import type { DetectedPlay } from "./types/play";
 import { matchVideoToPlay } from "./detection/video-match";
+import { calculateTier } from "./detection/ranking";
 import type { Logger } from "./logger";
 
 export type { DetectedPlay } from "./types/play";
@@ -82,6 +83,14 @@ export async function processGame(
     logger.warn("could not fetch video content for game", {
       gamePk,
       error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  for (const play of plays) {
+    play.tier = calculateTier({
+      targetBase: play.targetBase,
+      creditChain: play.creditChain,
+      hasVideo: play.videoUrl !== null,
     });
   }
 

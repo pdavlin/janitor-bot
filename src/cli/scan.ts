@@ -20,6 +20,7 @@ import {
 import { detectOutfieldAssists } from "../detection/detect";
 import type { DetectedPlay } from "../types/play";
 import { matchVideoToPlay } from "../detection/video-match";
+import { calculateTier } from "../detection/ranking";
 import { fetchGameContent } from "../api/mlb-client";
 import { createDatabase, insertPlays } from "../storage/db";
 import { scanDate } from "../pipeline";
@@ -195,6 +196,14 @@ async function scanSingleGame(
     logger.warn("could not fetch video content for game", {
       gamePk,
       error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  for (const play of plays) {
+    play.tier = calculateTier({
+      targetBase: play.targetBase,
+      creditChain: play.creditChain,
+      hasVideo: play.videoUrl !== null,
     });
   }
 

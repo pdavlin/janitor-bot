@@ -14,6 +14,7 @@ export type { Tier } from "../types/play";
 interface TierInput {
   targetBase: string;
   creditChain: string;
+  hasVideo: boolean;
 }
 
 /**
@@ -22,6 +23,7 @@ interface TierInput {
  * Scoring breakdown:
  *   - Target base:  Home = 4, 3B = 3, 2B = 1
  *   - Direct throw (no relay, 2 segments in credit chain): 2
+ *   - Video available: 1
  *
  * Total mapped to tier: 5+ high, 3-4 medium, 0-2 low.
  *
@@ -44,6 +46,11 @@ export function calculateTier(play: TierInput): Tier {
   const segments = play.creditChain.split(" -> ");
   if (segments.length === 2) {
     score += 2;
+  }
+
+  // Video availability bonus
+  if (play.hasVideo) {
+    score += 1;
   }
 
   if (score >= 5) return "high";

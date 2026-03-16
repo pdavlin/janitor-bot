@@ -3,7 +3,7 @@
  *
  * Scans every play in a game's live feed looking for runners thrown out
  * with an outfield assist credit ("f_assist_of"). Builds a DetectedPlay
- * record for each one, including the full credit chain and a tier ranking.
+ * record for each one, including the full credit chain.
  */
 
 import type {
@@ -14,7 +14,6 @@ import type {
   OutfieldPositionCode,
 } from "../types/mlb-api";
 import type { DetectedPlay } from "../types/play";
-import { calculateTier } from "./ranking";
 
 const OUTFIELD_CODES: ReadonlySet<string> = new Set<OutfieldPositionCode>([
   "7",
@@ -145,11 +144,6 @@ export function detectOutfieldAssists(
       const targetBase = normalizeBase(runner.movement.outBase);
       const creditChain = buildCreditChain(runner.credits ?? []);
 
-      const tier = calculateTier({
-        targetBase,
-        creditChain,
-      });
-
       detected.push({
         gamePk,
         playIndex: play.about.atBatIndex,
@@ -169,7 +163,7 @@ export function detectOutfieldAssists(
         homeTeam,
         description: play.result.description,
         creditChain,
-        tier,
+        tier: "low",
         videoUrl: null,
         videoTitle: null,
       });
