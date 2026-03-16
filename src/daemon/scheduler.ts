@@ -16,7 +16,7 @@
 
 import { fetchSchedule } from "../api/mlb-client";
 import type { ScheduleGame } from "../types/mlb-api";
-import { processGame, extractGameDate } from "../pipeline";
+import { processGame, extractGameDate, scanDate } from "../pipeline";
 import { insertPlays } from "../storage/db";
 import { sendSlackNotifications, filterByMinTier } from "../notifications/slack";
 import type { Config } from "../config";
@@ -503,6 +503,82 @@ async function sleepUntilNextDay(logger: Logger): Promise<number> {
   return fallbackMs;
 }
 
+/** Maximum number of days to backfill on startup. */
+const MAX_BACKFILL_DAYS = 7;
+
+/**
+ * Scans any dates missed between the last recorded play and yesterday.
+ * Capped at MAX_BACKFILL_DAYS to avoid hammering the API on a fresh deploy.
+ *
+ * @param options - Scheduler options (config, db, logger)
+ */
+async function backfillMissedDays(options: SchedulerOptions): Promise<void> {
+  const { db, logger } = options;
+
+  let lastDate: string | null;
+  try {
+    const row = db.prepare("SELECT MAX(date) as lastDate FROM plays").get() as {
+      lastDate: string | null;
+    };
+    lastDate = row.lastDate;
+  } catch {
+    logger.warn("could not query last play date, skipping backfill");
+    return;
+  }
+
+  if (!lastDate) {
+    logger.info("no existing plays, skipping backfill");
+    return;
+  }
+
+  const today = getTodayDate();
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = formatDate(yesterday);
+
+  // Nothing to backfill if last play is from yesterday or today
+  if (lastDate >= yesterdayStr) {
+    logger.info("no missed days to backfill", { lastDate });
+    return;
+  }
+
+  // Walk from lastDate+1 through yesterday, capped at MAX_BACKFILL_DAYS
+  const start = new Date(lastDate + "T00:00:00");
+  start.setDate(start.getDate() + 1);
+
+  let daysBackfilled = 0;
+
+  while (formatDate(start) <= yesterdayStr && daysBackfilled < MAX_BACKFILL_DAYS) {
+    if (shutdownRequested) break;
+
+    const dateStr = formatDate(start);
+    logger.info("backfilling missed date", { date: dateStr });
+
+    try {
+      const plays = await scanDate(dateStr, logger);
+      if (plays.length > 0) {
+        insertPlays(db, plays);
+        logger.info("backfill stored plays", {
+          date: dateStr,
+          count: plays.length,
+        });
+      }
+    } catch (err) {
+      logger.error("backfill failed for date", {
+        date: dateStr,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    start.setDate(start.getDate() + 1);
+    daysBackfilled++;
+  }
+
+  if (daysBackfilled > 0) {
+    logger.info("backfill complete", { daysBackfilled });
+  }
+}
+
 /**
  * Main scheduler loop. Runs indefinitely until requestShutdown() is called.
  *
@@ -524,6 +600,8 @@ export async function startScheduler(options: SchedulerOptions): Promise<void> {
     dbPath: config.dbPath,
     slackConfigured: config.slackWebhookUrl !== undefined,
   });
+
+  await backfillMissedDays(options);
 
   while (!shutdownRequested) {
     const today = getTodayDate();

@@ -55,7 +55,8 @@ export async function processGame(
   logger: Logger,
 ): Promise<DetectedPlay[]> {
   const liveFeed = await fetchLiveFeed(gamePk);
-  const plays = detectOutfieldAssists(liveFeed, gamePk, gameDate);
+  const officialDate = liveFeed.gameData.datetime?.officialDate ?? gameDate;
+  const plays = detectOutfieldAssists(liveFeed, gamePk, officialDate);
 
   if (plays.length === 0) {
     return [];
