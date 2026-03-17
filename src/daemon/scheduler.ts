@@ -679,6 +679,16 @@ export async function startScheduler(options: SchedulerOptions): Promise<void> {
       gamesAbandoned: 0,
     };
 
+    // If the date already advanced while we were processing (games ran past
+    // midnight UTC), skip the sleep and let the outer loop pick up the new day.
+    if (getTodayDate() !== today) {
+      logger.info("date advanced during processing, skipping sleep", {
+        trackedDate: today,
+        currentDate: getTodayDate(),
+      });
+      continue;
+    }
+
     // Day is done. Sleep until tomorrow's games.
     const sleepMs = await sleepUntilNextDay(logger);
     if (shutdownRequested) break;
