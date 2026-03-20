@@ -48,6 +48,8 @@ function makeMockPlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
     description: "Trea Turner flies out to center fielder Cody Bellinger.",
     creditChain: "CF -> 3B",
     tier: "high",
+    outs: 1,
+    runnersOn: "1st",
     videoUrl: null,
     videoTitle: null,
     ...overrides,

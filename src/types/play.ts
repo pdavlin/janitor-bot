@@ -40,6 +40,10 @@ export interface DetectedPlay {
   /** Full credit chain, e.g. "RF -> 2B -> C". */
   creditChain: string;
   tier: Tier;
+  /** Number of outs before the play. */
+  outs: number;
+  /** Comma-separated base positions with runners, e.g. "1st, 2nd". Empty string if bases empty. */
+  runnersOn: string;
   /** Populated later by video-match module. */
   videoUrl: string | null;
   /** Populated later by video-match module. */

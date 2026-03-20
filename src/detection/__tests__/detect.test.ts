@@ -6,7 +6,7 @@
  */
 
 import { test, expect, describe } from "bun:test";
-import { detectOutfieldAssists } from "../detect";
+import { detectOutfieldAssists, formatRunnersOn } from "../detect";
 import type {
   LiveFeedResponse,
   Play,
@@ -61,11 +61,12 @@ function makeRunner(overrides: {
   credits: RunnerCredit[];
   runnerId?: number;
   runnerName?: string;
+  originBase?: string | null;
 }): Runner {
   return {
     movement: {
-      originBase: "1B",
-      start: "1B",
+      originBase: overrides.originBase ?? "1B",
+      start: overrides.originBase ?? "1B",
       end: null,
       outBase: overrides.outBase,
       isOut: overrides.isOut,
@@ -97,6 +98,7 @@ function makePlay(
     homeScore?: number;
     description?: string;
     batterName?: string;
+    outs?: number;
   },
 ): Play {
   return {
@@ -116,6 +118,7 @@ function makePlay(
       batter: { id: 200, fullName: overrides?.batterName ?? "Test Batter" },
     },
     runners,
+    count: { outs: overrides?.outs ?? 0 },
   };
 }
 
@@ -297,5 +300,190 @@ describe("detectOutfieldAssists", () => {
 
     expect(results).toHaveLength(1);
     expect(results[0].creditChain).toBe("RF -> SS -> C");
+  });
+
+  test("deduplicates consecutive positions in credit chain", () => {
+    const credits = [
+      makeCredit("f_assist_of", "8", "CF", 500),
+      makeCredit("f_assist", "8", "CF", 500),
+      makeCredit("f_assist", "6", "SS", 502),
+      makeCredit("f_putout", "5", "3B", 503),
+    ];
+    const runner = makeRunner({ isOut: true, outBase: "3B", credits });
+    const play = makePlay([runner]);
+    const feed = makeLiveFeed([play]);
+
+    const results = detectOutfieldAssists(feed, 12345, "2025-06-15");
+
+    expect(results).toHaveLength(1);
+    expect(results[0].creditChain).toBe("CF -> SS -> 3B");
+  });
+
+  test("preserves non-consecutive duplicate positions in credit chain", () => {
+    const credits = [
+      makeCredit("f_assist_of", "8", "CF", 500),
+      makeCredit("f_assist", "6", "SS", 502),
+      makeCredit("f_putout", "8", "CF", 500),
+    ];
+    const runner = makeRunner({ isOut: true, outBase: "3B", credits });
+    const play = makePlay([runner]);
+    const feed = makeLiveFeed([play]);
+
+    const results = detectOutfieldAssists(feed, 12345, "2025-06-15");
+
+    expect(results).toHaveLength(1);
+    expect(results[0].creditChain).toBe("CF -> SS -> CF");
+  });
+
+  test("extracts outs from play.count", () => {
+    const credits = [
+      makeCredit("f_assist_of", "9", "RF", 500),
+      makeCredit("f_putout", "2", "C", 501),
+    ];
+    const runner = makeRunner({ isOut: true, outBase: "Home", credits });
+    const play = makePlay([runner], { outs: 1 });
+    const feed = makeLiveFeed([play]);
+
+    const results = detectOutfieldAssists(feed, 12345, "2025-06-15");
+
+    expect(results).toHaveLength(1);
+    expect(results[0].outs).toBe(1);
+  });
+
+  test("defaults outs to 0 when play.count is missing", () => {
+    const credits = [
+      makeCredit("f_assist_of", "9", "RF", 500),
+      makeCredit("f_putout", "2", "C", 501),
+    ];
+    const runner = makeRunner({ isOut: true, outBase: "Home", credits });
+    const play = makePlay([runner]);
+    delete play.count;
+    const feed = makeLiveFeed([play]);
+
+    const results = detectOutfieldAssists(feed, 12345, "2025-06-15");
+
+    expect(results).toHaveLength(1);
+    expect(results[0].outs).toBe(0);
+  });
+
+  test("extracts runnersOn from runner originBase values", () => {
+    const credits = [
+      makeCredit("f_assist_of", "9", "RF", 500),
+      makeCredit("f_putout", "2", "C", 501),
+    ];
+    const thrownOutRunner = makeRunner({
+      isOut: true,
+      outBase: "Home",
+      credits,
+      runnerId: 100,
+      originBase: "3B",
+    });
+    // Batter has null originBase and is not out
+    const batter: Runner = {
+      movement: {
+        originBase: null,
+        start: null,
+        end: "1B",
+        outBase: null,
+        isOut: false,
+        outNumber: 0,
+      },
+      details: { runner: { id: 201, fullName: "Batter" } },
+    };
+    // Another runner on 1B
+    const otherRunner: Runner = {
+      movement: {
+        originBase: "1B",
+        start: "1B",
+        end: "2B",
+        outBase: null,
+        isOut: false,
+        outNumber: 0,
+      },
+      details: { runner: { id: 202, fullName: "Other Runner" } },
+    };
+    const play = makePlay([thrownOutRunner, batter, otherRunner]);
+    const feed = makeLiveFeed([play]);
+
+    const results = detectOutfieldAssists(feed, 12345, "2025-06-15");
+
+    expect(results).toHaveLength(1);
+    expect(results[0].runnersOn).toBe("1st, 3rd");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatRunnersOn
+// ---------------------------------------------------------------------------
+
+describe("formatRunnersOn", () => {
+  test("returns empty string with no runners", () => {
+    expect(formatRunnersOn([])).toBe("");
+  });
+
+  test("returns empty string when all originBase values are null", () => {
+    const runners: Runner[] = [
+      {
+        movement: { originBase: null, start: null, end: "1B", outBase: null, isOut: false, outNumber: 0 },
+        details: { runner: { id: 1, fullName: "Batter" } },
+      },
+    ];
+    expect(formatRunnersOn(runners)).toBe("");
+  });
+
+  test("formats single runner on 1st", () => {
+    const runners: Runner[] = [
+      {
+        movement: { originBase: "1B", start: "1B", end: "2B", outBase: null, isOut: false, outNumber: 0 },
+        details: { runner: { id: 1, fullName: "Runner" } },
+      },
+    ];
+    expect(formatRunnersOn(runners)).toBe("1st");
+  });
+
+  test("formats runners on 1st and 3rd in order", () => {
+    const runners: Runner[] = [
+      {
+        movement: { originBase: "3B", start: "3B", end: null, outBase: "Home", isOut: true, outNumber: 1 },
+        details: { runner: { id: 1, fullName: "Runner A" } },
+      },
+      {
+        movement: { originBase: "1B", start: "1B", end: "2B", outBase: null, isOut: false, outNumber: 0 },
+        details: { runner: { id: 2, fullName: "Runner B" } },
+      },
+    ];
+    expect(formatRunnersOn(runners)).toBe("1st, 3rd");
+  });
+
+  test("formats bases loaded", () => {
+    const runners: Runner[] = [
+      {
+        movement: { originBase: "2B", start: "2B", end: "3B", outBase: null, isOut: false, outNumber: 0 },
+        details: { runner: { id: 1, fullName: "Runner A" } },
+      },
+      {
+        movement: { originBase: "1B", start: "1B", end: "2B", outBase: null, isOut: false, outNumber: 0 },
+        details: { runner: { id: 2, fullName: "Runner B" } },
+      },
+      {
+        movement: { originBase: "3B", start: "3B", end: null, outBase: null, isOut: false, outNumber: 0 },
+        details: { runner: { id: 3, fullName: "Runner C" } },
+      },
+    ];
+    expect(formatRunnersOn(runners)).toBe("1st, 2nd, 3rd");
+  });
+
+  test("deduplicates bases when multiple runners share an originBase", () => {
+    const runners: Runner[] = [
+      {
+        movement: { originBase: "1B", start: "1B", end: "2B", outBase: null, isOut: false, outNumber: 0 },
+        details: { runner: { id: 1, fullName: "Runner A" } },
+      },
+      {
+        movement: { originBase: "1B", start: "1B", end: null, outBase: "2B", isOut: true, outNumber: 1 },
+        details: { runner: { id: 2, fullName: "Runner B" } },
+      },
+    ];
+    expect(formatRunnersOn(runners)).toBe("1st");
   });
 });

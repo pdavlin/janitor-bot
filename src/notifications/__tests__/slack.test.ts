@@ -10,6 +10,7 @@ import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import {
   buildGameMessage,
   filterByMinTier,
+  formatSituation,
   sendWebhook,
 } from "../slack";
 import type { DetectedPlay, Tier } from "../../types/play";
@@ -40,6 +41,8 @@ function makeMockPlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
     description: "Bellinger throws out runner at third base",
     creditChain: "CF -> 3B",
     tier: "high",
+    outs: 1,
+    runnersOn: "1st, 2nd",
     videoUrl: null,
     videoTitle: null,
     ...overrides,
@@ -133,6 +136,28 @@ describe("buildGameMessage", () => {
 
     const actionsBlock = result.blocks.find((b) => b.type === "actions");
     expect(actionsBlock).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatSituation
+// ---------------------------------------------------------------------------
+
+describe("formatSituation", () => {
+  test("formats outs with runners on base", () => {
+    expect(formatSituation(1, "1st, 2nd")).toBe("1 out, R1 R2");
+  });
+
+  test("formats zero outs with bases empty", () => {
+    expect(formatSituation(0, "")).toBe("0 out, bases empty");
+  });
+
+  test("formats two outs with bases loaded", () => {
+    expect(formatSituation(2, "1st, 2nd, 3rd")).toBe("2 out, R1 R2 R3");
+  });
+
+  test("formats single runner on third", () => {
+    expect(formatSituation(1, "3rd")).toBe("1 out, R3");
   });
 });
 

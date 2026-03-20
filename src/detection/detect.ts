@@ -44,6 +44,29 @@ const BASE_LABELS: Record<string, string> = {
   Home: "Home",
 };
 
+/** Display-friendly labels for base positions. */
+const BASE_DISPLAY: Record<string, string> = {
+  "1B": "1st",
+  "2B": "2nd",
+  "3B": "3rd",
+};
+
+/**
+ * Format runner positions into a display string like "1st, 3rd".
+ * Returns empty string if no runners are on base.
+ */
+export function formatRunnersOn(runners: Runner[]): string {
+  const bases = [
+    ...new Set(
+      runners
+        .map((r) => r.movement.originBase)
+        .filter((b): b is string => b !== null && b in BASE_DISPLAY)
+    ),
+  ].sort((a, b) => ["1B", "2B", "3B"].indexOf(a) - ["1B", "2B", "3B"].indexOf(b));
+
+  return bases.map((b) => BASE_DISPLAY[b]).join(", ");
+}
+
 export type { DetectedPlay } from "../types/play";
 
 /**
@@ -85,7 +108,10 @@ function normalizeBase(outBase: string | null): string {
  * @returns Formatted chain string.
  */
 function buildCreditChain(credits: RunnerCredit[]): string {
-  return credits.map((c) => c.position.abbreviation).join(" -> ");
+  return credits
+    .map((c) => c.position.abbreviation)
+    .filter((pos, i, arr) => i === 0 || pos !== arr[i - 1])
+    .join(" -> ");
 }
 
 /**
@@ -143,6 +169,8 @@ export function detectOutfieldAssists(
 
       const targetBase = normalizeBase(runner.movement.outBase);
       const creditChain = buildCreditChain(runner.credits ?? []);
+      const outs = play.count?.outs ?? 0;
+      const runnersOn = formatRunnersOn(play.runners);
 
       detected.push({
         gamePk,
@@ -164,6 +192,8 @@ export function detectOutfieldAssists(
         description: play.result.description,
         creditChain,
         tier: "low",
+        outs,
+        runnersOn,
         videoUrl: null,
         videoTitle: null,
       });

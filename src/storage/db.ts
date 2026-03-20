@@ -87,6 +87,8 @@ interface PlayRow {
   description: string;
   credit_chain: string;
   tier: Tier;
+  outs: number;
+  runners_on: string;
   video_url: string | null;
   video_title: string | null;
   created_at: string;
@@ -130,17 +132,19 @@ INSERT INTO plays (
   game_pk, play_index, date, fielder_id, fielder_name, fielder_position,
   runner_id, runner_name, target_base, batter_name, inning, half_inning,
   away_score, home_score, away_team, home_team, description, credit_chain,
-  tier, video_url, video_title
+  tier, outs, runners_on, video_url, video_title
 ) VALUES (
   $gamePk, $playIndex, $date, $fielderId, $fielderName, $fielderPosition,
   $runnerId, $runnerName, $targetBase, $batterName, $inning, $halfInning,
   $awayScore, $homeScore, $awayTeam, $homeTeam, $description, $creditChain,
-  $tier, $videoUrl, $videoTitle
+  $tier, $outs, $runnersOn, $videoUrl, $videoTitle
 )
 ON CONFLICT(game_pk, play_index, runner_id) DO UPDATE SET
   video_url   = COALESCE(excluded.video_url, plays.video_url),
   video_title = COALESCE(excluded.video_title, plays.video_title),
-  tier        = excluded.tier;
+  tier        = excluded.tier,
+  outs        = excluded.outs,
+  runners_on  = excluded.runners_on;
 `;
 
 // ---------------------------------------------------------------------------
@@ -164,6 +168,14 @@ export function createDatabase(dbPath: string): Database {
   db.run("CREATE INDEX IF NOT EXISTS idx_plays_fielder_name ON plays(fielder_name);");
   db.run("CREATE INDEX IF NOT EXISTS idx_plays_away_team ON plays(away_team);");
   db.run("CREATE INDEX IF NOT EXISTS idx_plays_home_team ON plays(home_team);");
+
+  try {
+    db.run("ALTER TABLE plays ADD COLUMN outs INTEGER NOT NULL DEFAULT 0;");
+  } catch (_) { /* column already exists */ }
+  try {
+    db.run("ALTER TABLE plays ADD COLUMN runners_on TEXT NOT NULL DEFAULT '';");
+  } catch (_) { /* column already exists */ }
+
   return db;
 }
 
@@ -197,6 +209,8 @@ export function insertPlay(db: Database, play: DetectedPlay): void {
     $description: play.description,
     $creditChain: play.creditChain,
     $tier: play.tier,
+    $outs: play.outs,
+    $runnersOn: play.runnersOn,
     $videoUrl: play.videoUrl,
     $videoTitle: play.videoTitle,
   });
@@ -236,6 +250,8 @@ export function insertPlays(db: Database, plays: DetectedPlay[]): void {
         $description: play.description,
         $creditChain: play.creditChain,
         $tier: play.tier,
+        $outs: play.outs,
+        $runnersOn: play.runnersOn,
         $videoUrl: play.videoUrl,
         $videoTitle: play.videoTitle,
       });
@@ -270,6 +286,8 @@ function rowToStoredPlay(row: PlayRow): StoredPlay {
     description: row.description,
     creditChain: row.credit_chain,
     tier: row.tier,
+    outs: row.outs,
+    runnersOn: row.runners_on,
     videoUrl: row.video_url,
     videoTitle: row.video_title,
     createdAt: row.created_at,

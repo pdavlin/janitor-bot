@@ -155,12 +155,17 @@ export interface PlayEvent {
   playId?: string;
 }
 
+export interface PlayCount {
+  outs: number;
+}
+
 export interface Play {
   about: PlayAbout;
   result: PlayResult;
   matchup: PlayMatchup;
   runners: Runner[];
   playEvents?: PlayEvent[];
+  count?: PlayCount;
 }
 
 export interface BoxscorePlayerEntry {

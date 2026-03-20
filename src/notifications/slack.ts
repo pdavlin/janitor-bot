@@ -93,6 +93,19 @@ function formatInning(halfInning: string, inning: number): string {
 }
 
 /**
+ * Formats outs and runner positions into a compact situation string.
+ *
+ * @returns e.g. "1 out, R1 R2" or "0 out, bases empty"
+ */
+export function formatSituation(outs: number, runnersOn: string): string {
+  const outsText = `${outs} out`;
+  const runnersText = runnersOn
+    ? runnersOn.split(", ").map((b) => `R${b.charAt(0)}`).join(" ")
+    : "bases empty";
+  return `${outsText}, ${runnersText}`;
+}
+
+/**
  * Builds a set of Block Kit blocks for a single detected play.
  *
  * Each play renders as a section with fielder info, play description,
@@ -141,7 +154,7 @@ function buildPlayBlocks(play: DetectedPlay): SlackBlock[] {
     elements: [
       {
         type: "mrkdwn",
-        text: `${formatInning(play.halfInning, play.inning)} | ${play.awayTeam} ${play.awayScore} - ${play.homeTeam} ${play.homeScore}`,
+        text: `${formatInning(play.halfInning, play.inning)} | ${formatSituation(play.outs, play.runnersOn)} | ${play.awayTeam} ${play.awayScore} - ${play.homeTeam} ${play.homeScore}`,
       },
     ],
   });
