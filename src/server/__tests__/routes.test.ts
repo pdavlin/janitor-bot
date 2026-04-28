@@ -171,6 +171,22 @@ describe("HTTP server routes", () => {
   }
 
   // -------------------------------------------------------------------------
+  // GET /
+  // -------------------------------------------------------------------------
+
+  describe("GET /", () => {
+    test("returns HTML landing page", async () => {
+      const res = await get("/");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toContain("text/html");
+
+      const body = await res.text();
+      expect(body).toContain("<!doctype html>");
+      expect(body).toContain("janitor-bot");
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // GET /plays
   // -------------------------------------------------------------------------
 

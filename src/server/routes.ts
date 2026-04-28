@@ -24,6 +24,7 @@ import {
   getDbStats,
 } from "../storage/db";
 import type { SchedulerStatus } from "../daemon/scheduler";
+import { LANDING_PAGE_HTML } from "./landing";
 
 /** Dependencies injected into the server factory. */
 export interface ServerDeps {
@@ -184,6 +185,7 @@ function parsePlayFilters(
 
 /** Known route patterns for 405 detection. */
 const KNOWN_ROUTES: Array<RegExp | string> = [
+  "/",
   "/plays",
   "/plays/today",
   /^\/plays\/\d+$/,
@@ -327,6 +329,19 @@ export function startServer(deps: ServerDeps): HttpServer {
           } else {
             response = jsonResponse({ error: "Not found" }, 404);
           }
+          logRequest(logger, req.method, pathname, response.status, start);
+          return response;
+        }
+
+        // GET /
+        if (pathname === "/") {
+          response = new Response(LANDING_PAGE_HTML, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              ...CORS_HEADERS,
+            },
+          });
           logRequest(logger, req.method, pathname, response.status, start);
           return response;
         }
