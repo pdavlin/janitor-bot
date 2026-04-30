@@ -480,6 +480,149 @@ export function queryPlayStats(db: Database, from?: string, to?: string): PlaySt
 }
 
 /**
+ * A play that is eligible for a Savant video backfill attempt.
+ *
+ * Returned by queryBackfillCandidates as one record per unique
+ * (game_pk, play_index, play_id) tuple — runner-row duplicates are collapsed.
+ */
+export interface BackfillCandidate {
+  gamePk: number;
+  playIndex: number;
+  playId: string;
+  date: string;
+}
+
+/**
+ * Returns plays that are eligible for a Savant video backfill attempt.
+ *
+ * A row is eligible when:
+ *   - video_url is NULL (we don't already have a video)
+ *   - play_id is NOT NULL (we have a playId to query Savant with)
+ *   - date falls within the configurable window (default last 2 days)
+ *   - fetch_status is not in a terminal state ('success', 'no_video_found')
+ *
+ * DISTINCT collapses (game_pk, play_index, play_id) tuples so the caller
+ * makes one Savant request per play even when multiple runner rows share it.
+ *
+ * @param db - An open Database instance.
+ * @param windowDays - Inclusive age in days. Defaults to 2 (the daemon's
+ *                     normal coverage window). The historical CLI passes
+ *                     a very large value to disable the age cutoff.
+ */
+export function queryBackfillCandidates(
+  db: Database,
+  windowDays = 2,
+): BackfillCandidate[] {
+  // bun:sqlite parameter binding doesn't accept variables in date modifier
+  // strings, so windowDays is interpolated into the SQL literal. windowDays
+  // is a number from config; not user-supplied.
+  const sql = `
+    SELECT DISTINCT game_pk, play_index, play_id, date
+    FROM plays
+    WHERE video_url IS NULL
+      AND play_id IS NOT NULL
+      AND date >= date('now', '-${windowDays} days')
+      AND (fetch_status IS NULL OR fetch_status NOT IN ('success', 'no_video_found'))
+    ORDER BY date DESC, game_pk, play_index;
+  `;
+
+  const rows = db.prepare(sql).all() as {
+    game_pk: number;
+    play_index: number;
+    play_id: string;
+    date: string;
+  }[];
+
+  return rows.map((r) => ({
+    gamePk: r.game_pk,
+    playIndex: r.play_index,
+    playId: r.play_id,
+    date: r.date,
+  }));
+}
+
+/**
+ * Sets video_url, video_title, and fetch_status='success' for all rows
+ * with the given (game_pk, play_index). Multiple runner rows for the same
+ * play are updated in a single statement.
+ *
+ * @returns Number of rows updated.
+ */
+export function updatePlayVideoByPlayKey(
+  db: Database,
+  gamePk: number,
+  playIndex: number,
+  videoUrl: string,
+  videoTitle: string,
+): number {
+  const stmt = db.prepare(`
+    UPDATE plays
+    SET video_url = $videoUrl,
+        video_title = $videoTitle,
+        fetch_status = 'success'
+    WHERE game_pk = $gamePk AND play_index = $playIndex;
+  `);
+  const result = stmt.run({
+    $videoUrl: videoUrl,
+    $videoTitle: videoTitle,
+    $gamePk: gamePk,
+    $playIndex: playIndex,
+  });
+  return Number(result.changes);
+}
+
+/**
+ * Sets fetch_status for all rows with the given (game_pk, play_index)
+ * without touching video_url. Used when a Savant probe failed or returned
+ * no video, so the next cycle can decide whether to retry.
+ *
+ * @returns Number of rows updated.
+ */
+export function updatePlayFetchStatus(
+  db: Database,
+  gamePk: number,
+  playIndex: number,
+  status: FetchStatus,
+): number {
+  const stmt = db.prepare(`
+    UPDATE plays
+    SET fetch_status = $status
+    WHERE game_pk = $gamePk AND play_index = $playIndex;
+  `);
+  const result = stmt.run({
+    $status: status,
+    $gamePk: gamePk,
+    $playIndex: playIndex,
+  });
+  return Number(result.changes);
+}
+
+/**
+ * Populates play_id for legacy rows (game_pk, play_index) that don't have
+ * one yet. Idempotent: rows where play_id is already set are not modified.
+ *
+ * @returns Number of rows updated.
+ */
+export function updatePlayId(
+  db: Database,
+  gamePk: number,
+  playIndex: number,
+  playId: string,
+): number {
+  const stmt = db.prepare(`
+    UPDATE plays
+    SET play_id = $playId
+    WHERE game_pk = $gamePk AND play_index = $playIndex AND play_id IS NULL;
+  `);
+  const result = stmt.run({
+    $playId: playId,
+    $gamePk: gamePk,
+    $playIndex: playIndex,
+  });
+  return Number(result.changes);
+}
+
+/**
  * Database-level metadata: total rows, file size, date range.
  */
 export function getDbStats(db: Database, dbPath: string): DbStats {

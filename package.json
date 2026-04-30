@@ -6,6 +6,7 @@
   "scripts": {
     "scan": "bun run src/cli/scan.ts",
     "daemon": "bun run src/cli/daemon.ts",
+    "backfill:historical": "bun run src/cli/backfill-historical.ts",
     "test": "bun test",
     "check": "tsc --noEmit"
   },

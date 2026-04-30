@@ -18,6 +18,7 @@ function makeTestConfig(): Config {
   return {
     slackWebhookUrl: undefined,
     pollIntervalMinutes: 1,
+    backfillIntervalMinutes: 30,
     dbPath: ":memory:",
     minTier: undefined,
     logLevel: "error",

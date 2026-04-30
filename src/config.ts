@@ -8,6 +8,7 @@ export type LogLevel = (typeof VALID_LOG_LEVELS)[number];
 export interface Config {
   slackWebhookUrl: string | undefined;
   pollIntervalMinutes: number;
+  backfillIntervalMinutes: number;
   dbPath: string;
   minTier: Tier | undefined;
   logLevel: LogLevel;
@@ -26,6 +27,19 @@ export function loadConfig(): Config {
       );
     }
     pollIntervalMinutes = parsed;
+  }
+
+  const rawBackfillInterval = process.env.BACKFILL_INTERVAL_MINUTES;
+  let backfillIntervalMinutes = 30;
+
+  if (rawBackfillInterval !== undefined) {
+    const parsed = Number(rawBackfillInterval);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error(
+        `Invalid BACKFILL_INTERVAL_MINUTES: "${rawBackfillInterval}". Must be a positive number.`
+      );
+    }
+    backfillIntervalMinutes = parsed;
   }
 
   const rawMinTier = process.env.MIN_TIER;
@@ -68,6 +82,7 @@ export function loadConfig(): Config {
   return {
     slackWebhookUrl: process.env.SLACK_WEBHOOK_URL,
     pollIntervalMinutes,
+    backfillIntervalMinutes,
     dbPath: process.env.DB_PATH ?? "./janitor-throws.db",
     minTier,
     logLevel,
