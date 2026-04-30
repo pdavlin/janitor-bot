@@ -50,6 +50,8 @@ function makeMockPlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
     tier: "high",
     outs: 1,
     runnersOn: "1st",
+    playId: null,
+    fetchStatus: null,
     videoUrl: null,
     videoTitle: null,
     ...overrides,

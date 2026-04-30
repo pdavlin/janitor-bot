@@ -71,11 +71,25 @@ export async function processGame(
         (p) => p.about.atBatIndex === play.playIndex
       );
       const playId = extractPlayId(liveFeedPlay?.playEvents);
-      if (!playId) return;
-      const savantVideo = await fetchSavantVideo(playId, logger);
-      if (savantVideo) {
-        play.videoUrl = savantVideo.videoUrl;
-        play.videoTitle = savantVideo.videoTitle;
+      play.playId = playId;
+
+      if (!playId) {
+        play.fetchStatus = "no_play_id";
+        return;
+      }
+
+      const result = await fetchSavantVideo(playId, logger);
+      play.fetchStatus = result.status;
+      if (result.status === "success") {
+        play.videoUrl = result.videoUrl;
+        play.videoTitle = result.videoTitle;
+      } else {
+        logger.debug("savant fetch non-success", {
+          playId,
+          gamePk,
+          playIndex: play.playIndex,
+          status: result.status,
+        });
       }
     })
   );
@@ -95,6 +109,7 @@ export async function processGame(
         if (match) {
           play.videoUrl = match.videoUrl;
           play.videoTitle = match.videoTitle;
+          play.fetchStatus = "success";
         }
       }
     } catch (err) {

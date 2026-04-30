@@ -11,17 +11,26 @@
 import type { PlayEvent } from "../types/mlb-api";
 import type { Logger } from "../logger";
 
-export interface SavantVideoResult {
-  videoUrl: string;
-  videoTitle: string;
-}
+/**
+ * Discriminated outcome of a single Savant fetch attempt.
+ *
+ * The `httpStatus` and `error` payloads are present for log fidelity; the
+ * persisted `fetch_status` column stores only the discriminator.
+ */
+export type SavantFetchResult =
+  | { status: "success"; videoUrl: string; videoTitle: string }
+  | { status: "no_video_found" }
+  | { status: "no_source_tag" }
+  | { status: "non_200"; httpStatus: number }
+  | { status: "timeout" }
+  | { status: "network_error"; error: string };
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
 
 const SAVANT_BASE_URL = "https://baseballsavant.mlb.com/sporty-videos";
 
-const FETCH_TIMEOUT_MS = 5000;
+const FETCH_TIMEOUT_MS = 10000;
 
 /**
  * Decodes common HTML entities found in Savant video URLs.
@@ -70,18 +79,18 @@ export function extractPlayId(
 /**
  * Fetches a video URL from Baseball Savant's sporty-videos endpoint.
  *
- * Parses the returned HTML page for a <source> tag pointing to an mp4 file
- * on sporty-clips.mlb.com. Returns null when no video exists (Spring Training,
- * WBC, or video not yet processed).
+ * Returns a discriminated result so callers can distinguish failure modes
+ * (timeout vs HTTP error vs missing video). Logging of non-success branches
+ * is the caller's responsibility.
  *
  * @param playId - UUID from a pitch event's playId field.
- * @param logger - Optional structured logger for debug diagnostics.
- * @returns Video URL and title, or null if unavailable.
+ * @param _logger - Reserved for future use; no longer logs at this layer.
+ * @returns Discriminated SavantFetchResult.
  */
 export async function fetchSavantVideo(
   playId: string,
-  logger?: Logger,
-): Promise<SavantVideoResult | null> {
+  _logger?: Logger,
+): Promise<SavantFetchResult> {
   try {
     const url = `${SAVANT_BASE_URL}?playId=${playId}`;
     const response = await fetch(url, {
@@ -89,34 +98,33 @@ export async function fetchSavantVideo(
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      return { status: "non_200", httpStatus: response.status };
+    }
 
     const html = await response.text();
 
     if (html.includes("No Video Found")) {
-      logger?.debug("no savant video available", { playId });
-      return null;
+      return { status: "no_video_found" };
     }
 
     const sourceMatch = html.match(/<source[^>]+src="([^"]+)"/);
     if (!sourceMatch?.[1]) {
-      logger?.debug("savant video page missing source tag", { playId });
-      return null;
+      return { status: "no_source_tag" };
     }
 
-    const videoUrl = decodeHtmlEntities(sourceMatch[1]);
-
-    logger?.debug("savant video found", { playId });
-
     return {
-      videoUrl,
+      status: "success",
+      videoUrl: decodeHtmlEntities(sourceMatch[1]),
       videoTitle: "Baseball Savant Video",
     };
   } catch (err) {
-    logger?.debug("savant video fetch failed", {
-      playId,
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      return { status: "timeout" };
+    }
+    return {
+      status: "network_error",
       error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
+    };
   }
 }

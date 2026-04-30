@@ -61,7 +61,7 @@ describe("fetchSavantVideo", () => {
     globalThis.fetch = originalFetch;
   });
 
-  test("returns video URL from valid Savant response", async () => {
+  test("success: HTML with valid <source> returns success variant", async () => {
     const html = `
       <html><body>
         <video>
@@ -76,12 +76,13 @@ describe("fetchSavantVideo", () => {
 
     const result = await fetchSavantVideo("test-play-id");
     expect(result).toEqual({
+      status: "success",
       videoUrl: "https://sporty-clips.mlb.com/abc123.mp4",
       videoTitle: "Baseball Savant Video",
     });
   });
 
-  test("decodes HTML entities in video URL", async () => {
+  test("success: decodes HTML entities in video URL", async () => {
     const html = `
       <html><body>
         <video>
@@ -96,13 +97,32 @@ describe("fetchSavantVideo", () => {
 
     const result = await fetchSavantVideo("test-play-id");
     expect(result).toEqual({
+      status: "success",
       videoUrl:
         "https://sporty-clips.mlb.com/clip.mp4?token=abc&expires=123",
       videoTitle: "Baseball Savant Video",
     });
   });
 
-  test("returns null when Savant says No Video Found", async () => {
+  test("success: decodes decimal HTML entities", async () => {
+    const html = `
+      <video>
+        <source src="https://sporty-clips.mlb.com/clip.mp4?a&#38;b" type="video/mp4">
+      </video>
+    `;
+
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response(html, { status: 200 }))
+    ) as typeof fetch;
+
+    const result = await fetchSavantVideo("test-play-id");
+    expect(result.status).toBe("success");
+    if (result.status === "success") {
+      expect(result.videoUrl).toBe("https://sporty-clips.mlb.com/clip.mp4?a&b");
+    }
+  });
+
+  test("no_video_found: HTML containing 'No Video Found' returns variant", async () => {
     const html = `<html><body><h1>No Video Found</h1></body></html>`;
 
     globalThis.fetch = mock(() =>
@@ -110,28 +130,10 @@ describe("fetchSavantVideo", () => {
     ) as typeof fetch;
 
     const result = await fetchSavantVideo("test-play-id");
-    expect(result).toBeNull();
+    expect(result).toEqual({ status: "no_video_found" });
   });
 
-  test("returns null on non-200 response", async () => {
-    globalThis.fetch = mock(() =>
-      Promise.resolve(new Response("Forbidden", { status: 403 }))
-    ) as typeof fetch;
-
-    const result = await fetchSavantVideo("test-play-id");
-    expect(result).toBeNull();
-  });
-
-  test("returns null on network error", async () => {
-    globalThis.fetch = mock(() =>
-      Promise.reject(new Error("network failure"))
-    ) as typeof fetch;
-
-    const result = await fetchSavantVideo("test-play-id");
-    expect(result).toBeNull();
-  });
-
-  test("returns null when HTML has no source tag", async () => {
+  test("no_source_tag: HTML 200 with no <source> returns variant", async () => {
     const html = `<html><body><video></video></body></html>`;
 
     globalThis.fetch = mock(() =>
@@ -139,7 +141,46 @@ describe("fetchSavantVideo", () => {
     ) as typeof fetch;
 
     const result = await fetchSavantVideo("test-play-id");
-    expect(result).toBeNull();
+    expect(result).toEqual({ status: "no_source_tag" });
+  });
+
+  test("non_200: 500 response returns variant with httpStatus", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response("Internal Server Error", { status: 500 }))
+    ) as typeof fetch;
+
+    const result = await fetchSavantVideo("test-play-id");
+    expect(result).toEqual({ status: "non_200", httpStatus: 500 });
+  });
+
+  test("non_200: 403 response returns variant with httpStatus", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response("Forbidden", { status: 403 }))
+    ) as typeof fetch;
+
+    const result = await fetchSavantVideo("test-play-id");
+    expect(result).toEqual({ status: "non_200", httpStatus: 403 });
+  });
+
+  test("timeout: AbortSignal timeout DOMException returns timeout variant", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.reject(new DOMException("The operation timed out", "TimeoutError"))
+    ) as typeof fetch;
+
+    const result = await fetchSavantVideo("test-play-id");
+    expect(result).toEqual({ status: "timeout" });
+  });
+
+  test("network_error: fetch rejection returns variant with error message", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.reject(new Error("network failure"))
+    ) as typeof fetch;
+
+    const result = await fetchSavantVideo("test-play-id");
+    expect(result).toEqual({
+      status: "network_error",
+      error: "network failure",
+    });
   });
 
   test("sends correct URL and User-Agent header", async () => {
@@ -160,22 +201,5 @@ describe("fetchSavantVideo", () => {
       "https://baseballsavant.mlb.com/sporty-videos?playId=6571e75b-002e-3a60-bf42-82ef0a45ffd1"
     );
     expect(capturedHeaders?.get("User-Agent")).toContain("Mozilla/5.0");
-  });
-
-  test("decodes decimal HTML entities", async () => {
-    const html = `
-      <video>
-        <source src="https://sporty-clips.mlb.com/clip.mp4?a&#38;b" type="video/mp4">
-      </video>
-    `;
-
-    globalThis.fetch = mock(() =>
-      Promise.resolve(new Response(html, { status: 200 }))
-    ) as typeof fetch;
-
-    const result = await fetchSavantVideo("test-play-id");
-    expect(result?.videoUrl).toBe(
-      "https://sporty-clips.mlb.com/clip.mp4?a&b"
-    );
   });
 });

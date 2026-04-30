@@ -52,6 +52,8 @@ function makeMockPlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
     tier: "high",
     outs: 1,
     runnersOn: "1st",
+    playId: null,
+    fetchStatus: null,
     videoUrl: null,
     videoTitle: null,
     ...overrides,
@@ -433,5 +435,97 @@ describe("getDbStats", () => {
   test("dbSizeBytes is 0 for :memory: database", () => {
     const stats = getDbStats(db, ":memory:");
     expect(stats.dbSizeBytes).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// play_id and fetch_status columns
+// ---------------------------------------------------------------------------
+
+describe("play_id and fetch_status persistence", () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = createDatabase(":memory:");
+  });
+
+  test("inserts and reads back play_id and fetch_status", () => {
+    insertPlay(
+      db,
+      makeMockPlay({
+        playId: "6571e75b-002e-3a60-bf42-82ef0a45ffd1",
+        fetchStatus: "success",
+      }),
+    );
+
+    const stored = queryPlayById(db, 1);
+    expect(stored).not.toBeNull();
+    expect(stored!.playId).toBe("6571e75b-002e-3a60-bf42-82ef0a45ffd1");
+    expect(stored!.fetchStatus).toBe("success");
+  });
+
+  test("null play_id and fetch_status round-trip as null", () => {
+    insertPlay(db, makeMockPlay({ playId: null, fetchStatus: null }));
+    const stored = queryPlayById(db, 1);
+    expect(stored!.playId).toBeNull();
+    expect(stored!.fetchStatus).toBeNull();
+  });
+
+  test("ON CONFLICT updates fetch_status to the latest probe outcome", () => {
+    insertPlay(
+      db,
+      makeMockPlay({ playId: "abc", fetchStatus: "timeout" }),
+    );
+    expect(queryPlayById(db, 1)!.fetchStatus).toBe("timeout");
+
+    insertPlay(
+      db,
+      makeMockPlay({ playId: "abc", fetchStatus: "success" }),
+    );
+    const after = queryPlayById(db, 1);
+    expect(after!.fetchStatus).toBe("success");
+    expect(after!.playId).toBe("abc");
+  });
+
+  test("ON CONFLICT preserves existing play_id when re-insert has null", () => {
+    insertPlay(
+      db,
+      makeMockPlay({ playId: "original", fetchStatus: "success" }),
+    );
+    insertPlay(
+      db,
+      makeMockPlay({ playId: null, fetchStatus: "no_play_id" }),
+    );
+    const stored = queryPlayById(db, 1);
+    expect(stored!.playId).toBe("original");
+    expect(stored!.fetchStatus).toBe("no_play_id");
+  });
+
+  test("supports all FetchStatus literal values", () => {
+    const statuses = [
+      "success",
+      "no_video_found",
+      "no_source_tag",
+      "non_200",
+      "timeout",
+      "network_error",
+      "no_play_id",
+      "pending",
+    ] as const;
+
+    statuses.forEach((status, i) => {
+      insertPlay(
+        db,
+        makeMockPlay({
+          runnerId: 1000 + i,
+          playIndex: 1000 + i,
+          fetchStatus: status,
+        }),
+      );
+    });
+
+    const stored = queryPlays(db, { limit: 200 });
+    const seen = new Set(stored.map((p) => p.fetchStatus));
+    statuses.forEach((s) => expect(seen.has(s)).toBe(true));
   });
 });
