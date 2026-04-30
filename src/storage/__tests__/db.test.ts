@@ -18,6 +18,10 @@ import {
   queryPlayById,
   queryPlayStats,
   getDbStats,
+  queryBackfillCandidates,
+  updatePlayVideoByPlayKey,
+  updatePlayFetchStatus,
+  updatePlayId,
 } from "../db";
 import type { DetectedPlay, StoredPlay, PlayFilters } from "../db";
 
@@ -499,6 +503,151 @@ describe("play_id and fetch_status persistence", () => {
     const stored = queryPlayById(db, 1);
     expect(stored!.playId).toBe("original");
     expect(stored!.fetchStatus).toBe("no_play_id");
+  });
+
+  test("queryBackfillCandidates returns eligible rows and collapses runner duplicates", () => {
+    const today = new Date().toISOString().slice(0, 10);
+    insertPlays(db, [
+      // Eligible: NULL video, has play_id, NULL status
+      makeMockPlay({
+        playId: "play-a",
+        fetchStatus: null,
+        date: today,
+        playIndex: 1,
+        runnerId: 1,
+      }),
+      // Same play, different runner — should collapse to one candidate
+      makeMockPlay({
+        playId: "play-a",
+        fetchStatus: null,
+        date: today,
+        playIndex: 1,
+        runnerId: 2,
+      }),
+      // Eligible: retryable transient status
+      makeMockPlay({
+        playId: "play-b",
+        fetchStatus: "timeout",
+        date: today,
+        playIndex: 2,
+        runnerId: 3,
+      }),
+      // Excluded: success is terminal
+      makeMockPlay({
+        playId: "play-c",
+        fetchStatus: "success",
+        date: today,
+        playIndex: 3,
+        runnerId: 4,
+      }),
+      // Excluded: no_video_found is terminal
+      makeMockPlay({
+        playId: "play-d",
+        fetchStatus: "no_video_found",
+        date: today,
+        playIndex: 4,
+        runnerId: 5,
+      }),
+      // Excluded: NULL play_id
+      makeMockPlay({
+        playId: null,
+        fetchStatus: null,
+        date: today,
+        playIndex: 5,
+        runnerId: 6,
+      }),
+    ]);
+
+    const candidates = queryBackfillCandidates(db, 2);
+    const playIds = candidates.map((c) => c.playId).sort();
+    expect(playIds).toEqual(["play-a", "play-b"]);
+  });
+
+  test("queryBackfillCandidates respects the windowDays cutoff", () => {
+    const old = new Date();
+    old.setUTCDate(old.getUTCDate() - 5);
+    const oldDate = old.toISOString().slice(0, 10);
+
+    insertPlay(
+      db,
+      makeMockPlay({
+        playId: "old-play",
+        fetchStatus: null,
+        date: oldDate,
+        playIndex: 99,
+        runnerId: 99,
+      }),
+    );
+
+    expect(queryBackfillCandidates(db, 2)).toHaveLength(0);
+    // Wide window picks it back up.
+    expect(queryBackfillCandidates(db, 30)).toHaveLength(1);
+  });
+
+  test("updatePlayVideoByPlayKey updates all rows sharing (game_pk, play_index)", () => {
+    insertPlays(db, [
+      makeMockPlay({ playId: "abc", playIndex: 7, runnerId: 1 }),
+      makeMockPlay({ playId: "abc", playIndex: 7, runnerId: 2 }),
+      // Different play — should not be affected.
+      makeMockPlay({ playId: "xyz", playIndex: 8, runnerId: 3 }),
+    ]);
+
+    const changes = updatePlayVideoByPlayKey(
+      db,
+      717401,
+      7,
+      "https://video.example/x.mp4",
+      "Test Video",
+    );
+    expect(changes).toBe(2);
+
+    const allRows = queryPlays(db, { limit: 100 });
+    const targetRows = allRows.filter((r) => r.playIndex === 7);
+    const otherRows = allRows.filter((r) => r.playIndex === 8);
+
+    for (const r of targetRows) {
+      expect(r.videoUrl).toBe("https://video.example/x.mp4");
+      expect(r.videoTitle).toBe("Test Video");
+      expect(r.fetchStatus).toBe("success");
+    }
+    for (const r of otherRows) {
+      expect(r.videoUrl).toBeNull();
+    }
+  });
+
+  test("updatePlayFetchStatus only mutates fetch_status", () => {
+    insertPlays(db, [
+      makeMockPlay({ playId: "abc", playIndex: 7, runnerId: 1 }),
+      makeMockPlay({ playId: "abc", playIndex: 7, runnerId: 2 }),
+    ]);
+
+    const changes = updatePlayFetchStatus(db, 717401, 7, "timeout");
+    expect(changes).toBe(2);
+
+    const rows = queryPlays(db, { limit: 100 });
+    for (const r of rows) {
+      expect(r.fetchStatus).toBe("timeout");
+      expect(r.videoUrl).toBeNull();
+    }
+  });
+
+  test("updatePlayId only fills NULL play_id and is idempotent on populated rows", () => {
+    insertPlays(db, [
+      makeMockPlay({ playId: null, playIndex: 7, runnerId: 1 }),
+      makeMockPlay({ playId: null, playIndex: 7, runnerId: 2 }),
+    ]);
+
+    const first = updatePlayId(db, 717401, 7, "new-play-id");
+    expect(first).toBe(2);
+
+    // Second invocation must not overwrite.
+    const second = updatePlayId(db, 717401, 7, "different-play-id");
+    expect(second).toBe(0);
+
+    const rows = queryPlays(db, { limit: 100 });
+    for (const r of rows) {
+      expect(r.playId).toBe("new-play-id");
+    }
   });
 
   test("supports all FetchStatus literal values", () => {

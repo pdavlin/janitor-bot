@@ -19,6 +19,7 @@ import type { ScheduleGame } from "../types/mlb-api";
 import { processGame, extractGameDate, scanDate } from "../pipeline";
 import { insertPlays } from "../storage/db";
 import { sendSlackNotifications, filterByMinTier } from "../notifications/slack";
+import { runBackfillCycle } from "./backfill";
 import type { Config } from "../config";
 import type { Logger } from "../logger";
 import type { Database } from "bun:sqlite";
@@ -111,6 +112,14 @@ export function requestShutdown(): void {
 /** Resets the shutdown flag. Useful for tests. */
 export function resetShutdown(): void {
   shutdownRequested = false;
+}
+
+/**
+ * Returns the current value of the shutdown flag. Provided for callers
+ * that need a thunk (e.g. the backfill loop's isShuttingDown hook).
+ */
+function isShuttingDown(): boolean {
+  return shutdownRequested;
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +589,35 @@ async function backfillMissedDays(options: SchedulerOptions): Promise<void> {
 }
 
 /**
+ * Long-running peer task that re-runs the Savant video backfill cycle on a
+ * fixed interval. Sleep is broken into 1-second slices so a shutdown signal
+ * is honored within ~1s without coupling the cycle to scheduler internals.
+ *
+ * Failures inside a cycle are logged; the loop continues on the next tick.
+ */
+async function runBackfillLoop(
+  db: Database,
+  logger: Logger,
+  intervalMs: number,
+  shouldStop: () => boolean,
+): Promise<void> {
+  while (!shouldStop()) {
+    try {
+      await runBackfillCycle(db, logger, { isShuttingDown: shouldStop });
+    } catch (err) {
+      logger.error("backfill cycle threw", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    const sleepStart = Date.now();
+    while (Date.now() - sleepStart < intervalMs && !shouldStop()) {
+      await Bun.sleep(1000);
+    }
+  }
+}
+
+/**
  * Main scheduler loop. Runs indefinitely until requestShutdown() is called.
  *
  * On each iteration:
@@ -590,16 +628,22 @@ async function backfillMissedDays(options: SchedulerOptions): Promise<void> {
  * @param options - Config, database, and logger
  */
 export async function startScheduler(options: SchedulerOptions): Promise<void> {
-  const { config, logger } = options;
+  const { config, db, logger } = options;
   const pollIntervalMs = config.pollIntervalMinutes * 60 * 1000;
+  const backfillIntervalMs = config.backfillIntervalMinutes * 60 * 1000;
 
   shutdownRequested = false;
 
   logger.info("scheduler starting", {
     pollIntervalMinutes: config.pollIntervalMinutes,
+    backfillIntervalMinutes: config.backfillIntervalMinutes,
     dbPath: config.dbPath,
     slackConfigured: config.slackWebhookUrl !== undefined,
   });
+
+  // Spawn the Savant video backfill loop as a peer task. Fire-and-forget:
+  // it observes the shared shutdown flag and exits when the main loop does.
+  void runBackfillLoop(db, logger, backfillIntervalMs, isShuttingDown);
 
   await backfillMissedDays(options);
 

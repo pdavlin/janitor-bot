@@ -12,6 +12,7 @@ import { loadConfig } from "../config";
 const CONFIG_ENV_KEYS = [
   "SLACK_WEBHOOK_URL",
   "POLL_INTERVAL_MINUTES",
+  "BACKFILL_INTERVAL_MINUTES",
   "DB_PATH",
   "MIN_TIER",
   "LOG_LEVEL",
@@ -49,6 +50,7 @@ describe("loadConfig", () => {
     const config = loadConfig();
 
     expect(config.pollIntervalMinutes).toBe(30);
+    expect(config.backfillIntervalMinutes).toBe(30);
     expect(config.dbPath).toBe("./janitor-throws.db");
     expect(config.logLevel).toBe("info");
     expect(config.minTier).toBeUndefined();
@@ -63,6 +65,17 @@ describe("loadConfig", () => {
     process.env.POLL_INTERVAL_MINUTES = "15";
     const config = loadConfig();
     expect(config.pollIntervalMinutes).toBe(15);
+  });
+
+  test("BACKFILL_INTERVAL_MINUTES sets backfillIntervalMinutes", () => {
+    process.env.BACKFILL_INTERVAL_MINUTES = "60";
+    const config = loadConfig();
+    expect(config.backfillIntervalMinutes).toBe(60);
+  });
+
+  test("throws on invalid BACKFILL_INTERVAL_MINUTES", () => {
+    process.env.BACKFILL_INTERVAL_MINUTES = "0";
+    expect(() => loadConfig()).toThrow("Invalid BACKFILL_INTERVAL_MINUTES");
   });
 
   test("DB_PATH sets dbPath", () => {
