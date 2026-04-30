@@ -1,20 +1,18 @@
 /**
- * Slack webhook notification module for outfield assist alerts.
+ * Slack Block Kit formatters.
  *
- * Sends Block Kit formatted messages to a Slack webhook when outfield
- * assists are detected. Supports batching multiple plays from the same
- * game into a single message to reduce noise.
+ * Pure, delivery-agnostic builders for the messages our bot posts. The
+ * actual transport (webhook vs bot-token API) lives in `slack-client.ts`.
  *
  * @example
  * ```ts
- * const plays: DetectedPlay[] = [...];
- * const sent = await sendSlackNotifications(plays, webhookUrl, logger);
- * logger.info("notifications sent", { count: sent });
+ * const payload = buildGameMessage(plays);
+ * await postMessage(slackConfig, payload, logger);
  * ```
  */
 
-import type { DetectedPlay, Tier } from "../types/play";
-import type { Logger } from "../logger";
+import type { DetectedPlay, StoredPlay, Tier } from "../types/play";
+import type { BackfillSuccessEvent } from "../daemon/backfill";
 
 /** Emoji indicator mapped to each tier for visual color coding in Slack. */
 const TIER_EMOJI: Record<Tier, string> = {
@@ -36,12 +34,6 @@ const TIER_PRIORITY: Record<Tier, number> = {
   medium: 1,
   low: 0,
 };
-
-/** Base delay in milliseconds for exponential backoff. */
-const RETRY_BASE_DELAY_MS = 1000;
-
-/** Maximum number of webhook delivery attempts. */
-const MAX_RETRIES = 3;
 
 /**
  * A single Slack Block Kit block element.
@@ -76,7 +68,7 @@ interface SlackContextElement {
 
 type SlackBlockElement = SlackButtonElement | SlackContextElement;
 
-interface SlackPayload {
+export interface SlackPayload {
   blocks: SlackBlock[];
 }
 
@@ -189,7 +181,7 @@ function buildPlayBlocks(play: DetectedPlay): SlackBlock[] {
  *
  * @param plays - Array of DetectedPlay objects from the same game.
  *   Caller is responsible for ensuring all plays share the same gamePk.
- * @returns Slack Block Kit payload ready for webhook POST
+ * @returns Slack Block Kit payload ready for webhook POST or chat.postMessage
  */
 export function buildGameMessage(plays: DetectedPlay[]): SlackPayload {
   if (plays.length === 0) {
@@ -245,57 +237,35 @@ export function buildGameMessage(plays: DetectedPlay[]): SlackPayload {
 }
 
 /**
- * Sends a JSON payload to a Slack webhook URL with retry logic.
- *
- * Makes up to 3 attempts with exponential backoff (1s, 2s) between
- * attempts on non-2xx responses or network errors.
- *
- * @param url - Slack incoming webhook URL
- * @param payload - JSON-serializable payload to POST
- * @param logger - Logger instance for diagnostics
- * @returns true if the webhook accepted the payload, false after all retries exhausted
+ * Builds the thread reply that announces a Savant video has been rescued
+ * after the original post went out without one.
  */
-export async function sendWebhook(
-  url: string,
-  payload: unknown,
-  logger: Logger,
-): Promise<boolean> {
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.ok) {
-        return true;
-      }
-
-      const body = await response.text();
-      logger.warn("slack webhook returned non-2xx", {
-        status: response.status,
-        body,
-        attempt: attempt + 1,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.warn("slack webhook request failed", {
-        error: message,
-        attempt: attempt + 1,
-      });
-    }
-
-    if (attempt < MAX_RETRIES - 1) {
-      const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
-      await Bun.sleep(delayMs);
-    }
-  }
-
-  logger.error("slack webhook delivery failed after all retries", {
-    maxRetries: MAX_RETRIES,
-  });
-  return false;
+export function buildThreadReplyMessage(
+  play: StoredPlay,
+  event: BackfillSuccessEvent,
+): SlackPayload {
+  return {
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `:movie_camera: *Video now available* — ${play.fielderName} (${play.fielderPosition}) → ${play.targetBase}`,
+        },
+      },
+      {
+        type: "actions",
+        elements: [
+          {
+            type: "button",
+            text: { type: "plain_text", text: "Watch", emoji: true },
+            url: event.videoUrl,
+            action_id: `backfill_video_${event.gamePk}_${event.playIndex}`,
+          },
+        ],
+      },
+    ],
+  };
 }
 
 /**
@@ -320,56 +290,4 @@ export function filterByMinTier(
 
   const threshold = TIER_PRIORITY[minTier];
   return plays.filter((play) => TIER_PRIORITY[play.tier] >= threshold);
-}
-
-/**
- * Sends Slack notifications for a batch of detected outfield assists.
- *
- * Groups plays by gamePk so each game produces a single Slack message,
- * reducing channel noise when multiple assists occur in the same game.
- *
- * @param plays - All detected plays to notify about
- * @param webhookUrl - Slack incoming webhook URL
- * @param logger - Logger instance for diagnostics
- * @returns Number of game messages sent successfully
- */
-export async function sendSlackNotifications(
-  plays: DetectedPlay[],
-  webhookUrl: string,
-  logger: Logger,
-): Promise<number> {
-  if (plays.length === 0) {
-    logger.debug("no plays to notify about");
-    return 0;
-  }
-
-  const grouped = new Map<number, DetectedPlay[]>();
-  for (const play of plays) {
-    const existing = grouped.get(play.gamePk);
-    if (existing) {
-      existing.push(play);
-    } else {
-      grouped.set(play.gamePk, [play]);
-    }
-  }
-
-  let successCount = 0;
-
-  for (const [gamePk, gamePlays] of grouped) {
-    const payload = buildGameMessage(gamePlays);
-    logger.info("sending slack notification", {
-      gamePk,
-      playCount: gamePlays.length,
-    });
-
-    const ok = await sendWebhook(webhookUrl, payload, logger);
-    if (ok) {
-      successCount++;
-      logger.info("slack notification sent", { gamePk });
-    } else {
-      logger.error("slack notification failed", { gamePk });
-    }
-  }
-
-  return successCount;
 }

@@ -131,6 +131,18 @@ CREATE TABLE IF NOT EXISTS plays (
 );
 `;
 
+const CREATE_SLACK_MESSAGES_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS slack_messages (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  game_pk         INTEGER NOT NULL,
+  channel         TEXT    NOT NULL,
+  ts              TEXT    NOT NULL,
+  posted_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+  last_updated_at TEXT,
+  UNIQUE(game_pk)
+);
+`;
+
 const INSERT_PLAY_SQL = `
 INSERT INTO plays (
   game_pk, play_index, date, fielder_id, fielder_name, fielder_position,
@@ -190,6 +202,11 @@ export function createDatabase(dbPath: string): Database {
 
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_plays_video_url_null ON plays(date) WHERE video_url IS NULL;",
+  );
+
+  db.run(CREATE_SLACK_MESSAGES_TABLE_SQL);
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_slack_messages_game_pk ON slack_messages(game_pk);",
   );
 
   return db;

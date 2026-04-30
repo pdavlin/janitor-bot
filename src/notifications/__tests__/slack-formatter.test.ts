@@ -1,24 +1,19 @@
 /**
- * Tests for the Slack notification module.
+ * Tests for slack-formatter (Block Kit builders + tier filtering).
  *
- * Covers message building, tier filtering, and webhook delivery.
- * Uses a mock DetectedPlay factory and mocks globalThis.fetch for
- * webhook tests.
+ * Pure formatter tests live here. Transport (sendWebhook, postMessage,
+ * chat.update) is exercised in slack-client.test.ts.
  */
 
-import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import {
   buildGameMessage,
+  buildThreadReplyMessage,
   filterByMinTier,
   formatSituation,
-  sendWebhook,
-} from "../slack";
-import type { DetectedPlay, Tier } from "../../types/play";
-import type { Logger } from "../../logger";
-
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
+} from "../slack-formatter";
+import type { DetectedPlay, StoredPlay } from "../../types/play";
+import type { BackfillSuccessEvent } from "../../daemon/backfill";
 
 function makeMockPlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
   return {
@@ -51,19 +46,14 @@ function makeMockPlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
   };
 }
 
-/** A no-op logger that swallows all output. */
-function makeSilentLogger(): Logger {
+function makeStoredPlay(overrides: Partial<StoredPlay> = {}): StoredPlay {
   return {
-    debug: mock(() => {}),
-    info: mock(() => {}),
-    warn: mock(() => {}),
-    error: mock(() => {}),
+    ...makeMockPlay(),
+    id: 1,
+    createdAt: "2024-04-09T00:00:00.000Z",
+    ...overrides,
   };
 }
-
-// ---------------------------------------------------------------------------
-// buildGameMessage
-// ---------------------------------------------------------------------------
 
 describe("buildGameMessage", () => {
   test("empty plays returns empty blocks", () => {
@@ -75,18 +65,11 @@ describe("buildGameMessage", () => {
     const play = makeMockPlay();
     const result = buildGameMessage([play]);
 
-    // First block: header with team matchup
     expect(result.blocks[0].type).toBe("header");
     expect(result.blocks[0].text?.text).toBe("CHC @ SD");
-
-    // Second block: context with count and date
     expect(result.blocks[1].type).toBe("context");
     expect(result.blocks[1].elements?.[0]).toBeDefined();
-
-    // Third block: divider before the play
     expect(result.blocks[2].type).toBe("divider");
-
-    // Remaining blocks are the play detail blocks
     expect(result.blocks.length).toBeGreaterThan(3);
   });
 
@@ -97,11 +80,9 @@ describe("buildGameMessage", () => {
     ];
     const result = buildGameMessage(plays);
 
-    // Should have exactly one header
     const headers = result.blocks.filter((b) => b.type === "header");
     expect(headers).toHaveLength(1);
 
-    // Context should say "2 outfield assists"
     const contextBlock = result.blocks[1];
     const contextText =
       contextBlock.elements?.[0] && "text" in contextBlock.elements[0]
@@ -109,7 +90,6 @@ describe("buildGameMessage", () => {
         : "";
     expect(contextText).toContain("2 outfield assists");
 
-    // Two dividers, one per play
     const dividers = result.blocks.filter((b) => b.type === "divider");
     expect(dividers).toHaveLength(2);
   });
@@ -141,9 +121,41 @@ describe("buildGameMessage", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// formatSituation
-// ---------------------------------------------------------------------------
+describe("buildThreadReplyMessage", () => {
+  test("includes fielder, position, target base, and watch button", () => {
+    const play = makeStoredPlay({
+      fielderName: "Aaron Judge",
+      fielderPosition: "RF",
+      targetBase: "Home",
+    });
+    const event: BackfillSuccessEvent = {
+      gamePk: play.gamePk,
+      playIndex: play.playIndex,
+      videoUrl: "https://example.com/rescued.mp4",
+      videoTitle: "Late video",
+    };
+
+    const payload = buildThreadReplyMessage(play, event);
+    expect(payload.blocks).toHaveLength(2);
+
+    const section = payload.blocks[0];
+    const sectionText = section.text && "text" in section.text ? section.text.text : "";
+    expect(sectionText).toContain("Aaron Judge");
+    expect(sectionText).toContain("RF");
+    expect(sectionText).toContain("Home");
+    expect(sectionText).toContain("Video now available");
+
+    const action = payload.blocks[1];
+    expect(action.type).toBe("actions");
+    const button = action.elements?.[0];
+    if (button && "url" in button) {
+      expect(button.url).toBe("https://example.com/rescued.mp4");
+      expect(button.action_id).toBe(
+        `backfill_video_${play.gamePk}_${play.playIndex}`,
+      );
+    }
+  });
+});
 
 describe("formatSituation", () => {
   test("formats outs with runners on base", () => {
@@ -162,10 +174,6 @@ describe("formatSituation", () => {
     expect(formatSituation(1, "3rd")).toBe("1 out, R3");
   });
 });
-
-// ---------------------------------------------------------------------------
-// filterByMinTier
-// ---------------------------------------------------------------------------
 
 describe("filterByMinTier", () => {
   const plays: DetectedPlay[] = [
@@ -195,95 +203,5 @@ describe("filterByMinTier", () => {
     const result = filterByMinTier(plays, "high");
     expect(result).toHaveLength(1);
     expect(result[0].tier).toBe("high");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// sendWebhook
-// ---------------------------------------------------------------------------
-
-describe("sendWebhook", () => {
-  const originalFetch = globalThis.fetch;
-
-  function mockFetch(fn: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>): void {
-    const mocked = Object.assign(mock(fn), { preconnect: mock((_url: string | URL) => {}) });
-    globalThis.fetch = mocked;
-  }
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  test("successful 200 response returns true", async () => {
-    mockFetch(() =>
-      Promise.resolve(new Response("ok", { status: 200 })),
-    );
-
-    const logger = makeSilentLogger();
-    const result = await sendWebhook(
-      "https://hooks.slack.com/test",
-      { text: "hi" },
-      logger,
-    );
-
-    expect(result).toBe(true);
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-  });
-
-  test("non-2xx response retries and returns false after all attempts", async () => {
-    mockFetch(() =>
-      Promise.resolve(new Response("rate limited", { status: 429 })),
-    );
-
-    const logger = makeSilentLogger();
-    const result = await sendWebhook(
-      "https://hooks.slack.com/test",
-      { text: "hi" },
-      logger,
-    );
-
-    expect(result).toBe(false);
-    // 3 attempts total (MAX_RETRIES = 3)
-    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
-    // Logger should have warned about non-2xx and errored on final failure
-    expect(logger.warn).toHaveBeenCalled();
-    expect(logger.error).toHaveBeenCalled();
-  });
-
-  test("network error retries and returns false after all attempts", async () => {
-    mockFetch(() =>
-      Promise.reject(new Error("network unreachable")),
-    );
-
-    const logger = makeSilentLogger();
-    const result = await sendWebhook(
-      "https://hooks.slack.com/test",
-      { text: "hi" },
-      logger,
-    );
-
-    expect(result).toBe(false);
-    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
-  });
-
-  test("returns true on first success even if earlier attempts would fail", async () => {
-    let callCount = 0;
-    mockFetch(() => {
-      callCount++;
-      if (callCount === 1) {
-        return Promise.resolve(new Response("error", { status: 500 }));
-      }
-      return Promise.resolve(new Response("ok", { status: 200 }));
-    });
-
-    const logger = makeSilentLogger();
-    const result = await sendWebhook(
-      "https://hooks.slack.com/test",
-      { text: "hi" },
-      logger,
-    );
-
-    expect(result).toBe(true);
-    expect(callCount).toBe(2);
   });
 });

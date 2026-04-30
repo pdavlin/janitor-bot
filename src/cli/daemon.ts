@@ -8,17 +8,21 @@
  *   bun run src/cli/daemon.ts
  *
  * Environment:
- *   DB_PATH              - path to SQLite database file (default: ./janitor-throws.db)
- *   POLL_INTERVAL_MINUTES - minutes between scan cycles (default: 30)
- *   SLACK_WEBHOOK_URL    - Slack incoming webhook URL for notifications (optional)
- *   MIN_TIER             - minimum play tier to report: high, medium, low (optional)
- *   LOG_LEVEL            - logging verbosity: debug, info, warn, error (default: info)
+ *   DB_PATH                  - path to SQLite database file (default: ./janitor-throws.db)
+ *   POLL_INTERVAL_MINUTES    - minutes between scan cycles (default: 30)
+ *   BACKFILL_INTERVAL_MINUTES - minutes between Savant video backfill cycles (default: 30)
+ *   SLACK_BOT_TOKEN          - Slack bot token (xoxb-...) for chat.postMessage / chat.update
+ *   SLACK_CHANNEL_ID         - Channel ID where bot-token messages are posted (required with SLACK_BOT_TOKEN)
+ *   SLACK_WEBHOOK_URL        - Slack incoming webhook URL (used as fallback when bot token is unset)
+ *   MIN_TIER                 - minimum play tier to report: high, medium, low (optional)
+ *   LOG_LEVEL                - logging verbosity: debug, info, warn, error (default: info)
  */
 
 import { loadConfig } from "../config";
 import { createLogger } from "../logger";
 import { createDatabase } from "../storage/db";
 import { startScheduler, requestShutdown, getSchedulerStatus } from "../daemon/scheduler";
+import { determineSlackMode } from "../notifications/slack-client";
 import { startServer } from "../server/routes";
 
 /**
@@ -29,10 +33,17 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger(config.logLevel);
 
+  const slackMode = determineSlackMode({
+    botToken: config.slackBotToken,
+    channelId: config.slackChannelId,
+    webhookUrl: config.slackWebhookUrl,
+  });
+
   logger.info("janitor-bot daemon starting", {
     dbPath: config.dbPath,
     pollIntervalMinutes: config.pollIntervalMinutes,
-    slackConfigured: config.slackWebhookUrl !== undefined,
+    backfillIntervalMinutes: config.backfillIntervalMinutes,
+    slackMode,
     minTier: config.minTier ?? "all",
     logLevel: config.logLevel,
     port: config.port,
