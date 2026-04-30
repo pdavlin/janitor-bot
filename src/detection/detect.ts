@@ -194,6 +194,8 @@ export function detectOutfieldAssists(
         tier: "low",
         outs,
         runnersOn,
+        playId: null,
+        fetchStatus: null,
         videoUrl: null,
         videoTitle: null,
       });

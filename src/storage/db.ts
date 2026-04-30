@@ -12,7 +12,7 @@
  */
 
 import { Database } from "bun:sqlite";
-import type { Tier, DetectedPlay, StoredPlay } from "../types/play";
+import type { Tier, FetchStatus, DetectedPlay, StoredPlay } from "../types/play";
 
 export type { DetectedPlay, StoredPlay } from "../types/play";
 
@@ -91,6 +91,8 @@ interface PlayRow {
   runners_on: string;
   video_url: string | null;
   video_title: string | null;
+  play_id: string | null;
+  fetch_status: FetchStatus | null;
   created_at: string;
 }
 
@@ -122,6 +124,8 @@ CREATE TABLE IF NOT EXISTS plays (
   tier            TEXT    NOT NULL,
   video_url       TEXT,
   video_title     TEXT,
+  play_id         TEXT,
+  fetch_status    TEXT,
   created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
   UNIQUE(game_pk, play_index, runner_id)
 );
@@ -132,19 +136,21 @@ INSERT INTO plays (
   game_pk, play_index, date, fielder_id, fielder_name, fielder_position,
   runner_id, runner_name, target_base, batter_name, inning, half_inning,
   away_score, home_score, away_team, home_team, description, credit_chain,
-  tier, outs, runners_on, video_url, video_title
+  tier, outs, runners_on, video_url, video_title, play_id, fetch_status
 ) VALUES (
   $gamePk, $playIndex, $date, $fielderId, $fielderName, $fielderPosition,
   $runnerId, $runnerName, $targetBase, $batterName, $inning, $halfInning,
   $awayScore, $homeScore, $awayTeam, $homeTeam, $description, $creditChain,
-  $tier, $outs, $runnersOn, $videoUrl, $videoTitle
+  $tier, $outs, $runnersOn, $videoUrl, $videoTitle, $playId, $fetchStatus
 )
 ON CONFLICT(game_pk, play_index, runner_id) DO UPDATE SET
-  video_url   = COALESCE(excluded.video_url, plays.video_url),
-  video_title = COALESCE(excluded.video_title, plays.video_title),
-  tier        = excluded.tier,
-  outs        = excluded.outs,
-  runners_on  = excluded.runners_on;
+  video_url    = COALESCE(excluded.video_url, plays.video_url),
+  video_title  = COALESCE(excluded.video_title, plays.video_title),
+  tier         = excluded.tier,
+  outs         = excluded.outs,
+  runners_on   = excluded.runners_on,
+  play_id      = COALESCE(excluded.play_id, plays.play_id),
+  fetch_status = excluded.fetch_status;
 `;
 
 // ---------------------------------------------------------------------------
@@ -175,6 +181,16 @@ export function createDatabase(dbPath: string): Database {
   try {
     db.run("ALTER TABLE plays ADD COLUMN runners_on TEXT NOT NULL DEFAULT '';");
   } catch (_) { /* column already exists */ }
+  try {
+    db.run("ALTER TABLE plays ADD COLUMN play_id TEXT;");
+  } catch (_) { /* column already exists */ }
+  try {
+    db.run("ALTER TABLE plays ADD COLUMN fetch_status TEXT;");
+  } catch (_) { /* column already exists */ }
+
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_plays_video_url_null ON plays(date) WHERE video_url IS NULL;",
+  );
 
   return db;
 }
@@ -213,6 +229,8 @@ export function insertPlay(db: Database, play: DetectedPlay): void {
     $runnersOn: play.runnersOn,
     $videoUrl: play.videoUrl,
     $videoTitle: play.videoTitle,
+    $playId: play.playId,
+    $fetchStatus: play.fetchStatus,
   });
 }
 
@@ -254,6 +272,8 @@ export function insertPlays(db: Database, plays: DetectedPlay[]): void {
         $runnersOn: play.runnersOn,
         $videoUrl: play.videoUrl,
         $videoTitle: play.videoTitle,
+        $playId: play.playId,
+        $fetchStatus: play.fetchStatus,
       });
     }
   });
@@ -290,6 +310,8 @@ function rowToStoredPlay(row: PlayRow): StoredPlay {
     runnersOn: row.runners_on,
     videoUrl: row.video_url,
     videoTitle: row.video_title,
+    playId: row.play_id,
+    fetchStatus: row.fetch_status,
     createdAt: row.created_at,
   };
 }
