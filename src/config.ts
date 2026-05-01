@@ -7,6 +7,8 @@ export type LogLevel = (typeof VALID_LOG_LEVELS)[number];
 
 export interface Config {
   slackWebhookUrl: string | undefined;
+  slackBotToken: string | undefined;
+  slackChannelId: string | undefined;
   pollIntervalMinutes: number;
   backfillIntervalMinutes: number;
   dbPath: string;
@@ -79,8 +81,24 @@ export function loadConfig(): Config {
     port = parsed;
   }
 
+  const slackBotToken = process.env.SLACK_BOT_TOKEN;
+  const slackChannelId = process.env.SLACK_CHANNEL_ID;
+
+  if (slackBotToken && !slackChannelId) {
+    throw new Error(
+      "SLACK_BOT_TOKEN is set but SLACK_CHANNEL_ID is not. Both are required for bot-token mode.",
+    );
+  }
+  if (slackChannelId && !slackBotToken) {
+    throw new Error(
+      "SLACK_CHANNEL_ID is set but SLACK_BOT_TOKEN is not. Both are required for bot-token mode.",
+    );
+  }
+
   return {
     slackWebhookUrl: process.env.SLACK_WEBHOOK_URL,
+    slackBotToken,
+    slackChannelId,
     pollIntervalMinutes,
     backfillIntervalMinutes,
     dbPath: process.env.DB_PATH ?? "./janitor-throws.db",

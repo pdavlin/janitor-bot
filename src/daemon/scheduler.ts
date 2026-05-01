@@ -18,12 +18,28 @@ import { fetchSchedule } from "../api/mlb-client";
 import type { ScheduleGame } from "../types/mlb-api";
 import { processGame, extractGameDate, scanDate } from "../pipeline";
 import { insertPlays } from "../storage/db";
-import { sendSlackNotifications, filterByMinTier } from "../notifications/slack";
+import { filterByMinTier } from "../notifications/slack-formatter";
+import {
+  sendGameNotifications,
+  determineSlackMode,
+  type SlackClientConfig,
+} from "../notifications/slack-client";
+import { recordSlackMessage } from "../notifications/slack-messages-store";
+import { makeBackfillNotifier } from "../notifications/backfill-notifier";
 import { runBackfillCycle } from "./backfill";
 import type { Config } from "../config";
 import type { Logger } from "../logger";
 import type { Database } from "bun:sqlite";
 import type { DetectedPlay } from "../types/play";
+
+/** Builds the SlackClientConfig view consumed by slack-client / notifier. */
+function toSlackClientConfig(config: Config): SlackClientConfig {
+  return {
+    botToken: config.slackBotToken,
+    channelId: config.slackChannelId,
+    webhookUrl: config.slackWebhookUrl,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Game state tracking
@@ -279,18 +295,30 @@ async function handleFinalGame(
   }
 
   // Send Slack notifications if configured
-  if (config.slackWebhookUrl) {
+  const slackConfig = toSlackClientConfig(config);
+  if (determineSlackMode(slackConfig) !== "disabled") {
     const filtered = filterByMinTier(plays, config.minTier);
     if (filtered.length > 0) {
       try {
-        const sent = await sendSlackNotifications(
-          filtered,
-          config.slackWebhookUrl,
-          logger,
-        );
-        logger.info("slack notifications sent", {
+        const results = await sendGameNotifications(filtered, slackConfig, logger);
+        let messagesSent = 0;
+        for (const { gamePk, result } of results) {
+          if (result) {
+            messagesSent++;
+            try {
+              recordSlackMessage(db, gamePk, result.channel, result.ts);
+            } catch (err) {
+              logger.error("failed to record slack message reference", {
+                gamePk,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+        }
+        logger.info("slack notifications complete", {
           gamePk: game.gamePk,
-          messagesSent: sent,
+          messagesSent,
+          totalAttempted: results.length,
         });
       } catch (err) {
         logger.error("slack notification error", {
@@ -600,10 +628,14 @@ async function runBackfillLoop(
   logger: Logger,
   intervalMs: number,
   shouldStop: () => boolean,
+  onSuccess?: (event: import("./backfill").BackfillSuccessEvent) => Promise<void>,
 ): Promise<void> {
   while (!shouldStop()) {
     try {
-      await runBackfillCycle(db, logger, { isShuttingDown: shouldStop });
+      await runBackfillCycle(db, logger, {
+        isShuttingDown: shouldStop,
+        onSuccess,
+      });
     } catch (err) {
       logger.error("backfill cycle threw", {
         error: err instanceof Error ? err.message : String(err),
@@ -634,16 +666,26 @@ export async function startScheduler(options: SchedulerOptions): Promise<void> {
 
   shutdownRequested = false;
 
+  const slackConfig = toSlackClientConfig(config);
+  const slackMode = determineSlackMode(slackConfig);
+
   logger.info("scheduler starting", {
     pollIntervalMinutes: config.pollIntervalMinutes,
     backfillIntervalMinutes: config.backfillIntervalMinutes,
     dbPath: config.dbPath,
-    slackConfigured: config.slackWebhookUrl !== undefined,
+    slackMode,
   });
+
+  // Backfill rescues only get a Slack edit + thread reply when we have a bot
+  // token. Webhook mode has no addressable ts to update, so we skip the hook.
+  const backfillNotifier =
+    slackMode === "bot_token"
+      ? makeBackfillNotifier(db, slackConfig, logger)
+      : undefined;
 
   // Spawn the Savant video backfill loop as a peer task. Fire-and-forget:
   // it observes the shared shutdown flag and exits when the main loop does.
-  void runBackfillLoop(db, logger, backfillIntervalMs, isShuttingDown);
+  void runBackfillLoop(db, logger, backfillIntervalMs, isShuttingDown, backfillNotifier);
 
   await backfillMissedDays(options);
 

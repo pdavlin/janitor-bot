@@ -11,6 +11,8 @@ import { loadConfig } from "../config";
 /** Env vars that loadConfig reads. */
 const CONFIG_ENV_KEYS = [
   "SLACK_WEBHOOK_URL",
+  "SLACK_BOT_TOKEN",
+  "SLACK_CHANNEL_ID",
   "POLL_INTERVAL_MINUTES",
   "BACKFILL_INTERVAL_MINUTES",
   "DB_PATH",
@@ -101,6 +103,24 @@ describe("loadConfig", () => {
     process.env.SLACK_WEBHOOK_URL = url;
     const config = loadConfig();
     expect(config.slackWebhookUrl).toBe(url);
+  });
+
+  test("SLACK_BOT_TOKEN + SLACK_CHANNEL_ID pass through together", () => {
+    process.env.SLACK_BOT_TOKEN = "xoxb-test";
+    process.env.SLACK_CHANNEL_ID = "C123";
+    const config = loadConfig();
+    expect(config.slackBotToken).toBe("xoxb-test");
+    expect(config.slackChannelId).toBe("C123");
+  });
+
+  test("throws when SLACK_BOT_TOKEN is set without SLACK_CHANNEL_ID", () => {
+    process.env.SLACK_BOT_TOKEN = "xoxb-test";
+    expect(() => loadConfig()).toThrow(/SLACK_BOT_TOKEN.*SLACK_CHANNEL_ID/);
+  });
+
+  test("throws when SLACK_CHANNEL_ID is set without SLACK_BOT_TOKEN", () => {
+    process.env.SLACK_CHANNEL_ID = "C123";
+    expect(() => loadConfig()).toThrow(/SLACK_CHANNEL_ID.*SLACK_BOT_TOKEN/);
   });
 
   // -------------------------------------------------------------------------

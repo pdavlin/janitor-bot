@@ -17,6 +17,8 @@ import type { Database } from "bun:sqlite";
 function makeTestConfig(): Config {
   return {
     slackWebhookUrl: undefined,
+    slackBotToken: undefined,
+    slackChannelId: undefined,
     pollIntervalMinutes: 1,
     backfillIntervalMinutes: 30,
     dbPath: ":memory:",
