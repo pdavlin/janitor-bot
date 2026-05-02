@@ -13,6 +13,13 @@
 
 import type { DetectedPlay, StoredPlay, Tier } from "../types/play";
 import type { BackfillSuccessEvent } from "../daemon/backfill";
+import { teamEmoji } from "./team-emoji";
+
+/** Final score for a game, threaded from the scheduler through the formatter. */
+export interface GameFinalScore {
+  away: number;
+  home: number;
+}
 
 /** Emoji indicator mapped to each tier for visual color coding in Slack. */
 const TIER_EMOJI: Record<Tier, string> = {
@@ -106,7 +113,7 @@ export function formatSituation(outs: number, runnersOn: string): string {
  * @param play - The detected outfield assist play
  * @returns Array of Slack blocks representing this play
  */
-function buildPlayBlocks(play: DetectedPlay): SlackBlock[] {
+function buildPlayBlocks(play: DetectedPlay | StoredPlay): SlackBlock[] {
   const blocks: SlackBlock[] = [];
   const tierEmoji = TIER_EMOJI[play.tier];
   const tierLabel = TIER_LABEL[play.tier];
@@ -234,6 +241,69 @@ export function buildGameMessage(plays: DetectedPlay[]): SlackPayload {
   }
 
   return { blocks };
+}
+
+/**
+ * Builds the bot-token-mode header for a game: bold team abbrev + custom team
+ * emoji + final score, rendered as a single mrkdwn section followed by a
+ * context block summarizing the assist count and date.
+ *
+ * Slack's `header` block is plain_text and does not render emoji shortcodes
+ * inside its text, so the header uses `section`/`mrkdwn` instead. A `*X*`
+ * pair surrounds each abbrev for bold, and the literal "@" separator avoids
+ * any ambiguity with the bold markers.
+ *
+ * When a team abbrev has no emoji mapping the renderer degrades to bold-only
+ * (no `:undefined:` placeholder).
+ */
+export function buildGameHeaderMessage(
+  plays: DetectedPlay[],
+  score: GameFinalScore,
+): SlackPayload {
+  if (plays.length === 0) {
+    return { blocks: [] };
+  }
+  const first = plays[0];
+  const awayEmoji = teamEmoji(first.awayTeam);
+  const homeEmoji = teamEmoji(first.homeTeam);
+
+  const awayPart = awayEmoji
+    ? `*${first.awayTeam}* :${awayEmoji}: ${score.away}`
+    : `*${first.awayTeam}* ${score.away}`;
+  const homePart = homeEmoji
+    ? `${score.home} :${homeEmoji}: *${first.homeTeam}*`
+    : `${score.home} *${first.homeTeam}*`;
+
+  return {
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `${awayPart} @ ${homePart}`,
+        },
+      },
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: `${plays.length} outfield assist${plays.length > 1 ? "s" : ""} detected | ${first.date}`,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Builds a single play's blocks for use as a thread reply under the game
+ * header in bot-token mode.
+ */
+export function buildPlayReplyMessage(
+  play: DetectedPlay | StoredPlay,
+): SlackPayload {
+  return { blocks: buildPlayBlocks(play) };
 }
 
 /**
