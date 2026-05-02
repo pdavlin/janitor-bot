@@ -8,6 +8,8 @@
 import { test, expect, describe } from "bun:test";
 import {
   buildGameMessage,
+  buildGameHeaderMessage,
+  buildPlayReplyMessage,
   buildThreadReplyMessage,
   filterByMinTier,
   formatSituation,
@@ -118,6 +120,99 @@ describe("buildGameMessage", () => {
 
     const actionsBlock = result.blocks.find((b) => b.type === "actions");
     expect(actionsBlock).toBeUndefined();
+  });
+});
+
+describe("buildGameHeaderMessage", () => {
+  test("empty plays returns empty blocks", () => {
+    expect(buildGameHeaderMessage([], { away: 0, home: 0 }).blocks).toEqual([]);
+  });
+
+  test("known abbreviations render bold abbrev + emoji + score, joined by @", () => {
+    const play = makeMockPlay({ awayTeam: "NYY", homeTeam: "NYM" });
+    const payload = buildGameHeaderMessage([play], { away: 0, home: 1 });
+
+    const section = payload.blocks[0];
+    expect(section.type).toBe("section");
+    const text =
+      section.text && "text" in section.text ? section.text.text : "";
+    expect(text).toBe(
+      "*NYY* :new-york-yankees: 0 @ 1 :new-york-mets: *NYM*",
+    );
+  });
+
+  test("unknown abbreviation falls back to bold-only with no emoji", () => {
+    const play = makeMockPlay({ awayTeam: "ZZZ", homeTeam: "NYM" });
+    const payload = buildGameHeaderMessage([play], { away: 2, home: 4 });
+    const section = payload.blocks[0];
+    const text =
+      section.text && "text" in section.text ? section.text.text : "";
+    expect(text).toBe("*ZZZ* 2 @ 4 :new-york-mets: *NYM*");
+  });
+
+  test("zero-zero score renders cleanly", () => {
+    const play = makeMockPlay({ awayTeam: "BOS", homeTeam: "NYY" });
+    const payload = buildGameHeaderMessage([play], { away: 0, home: 0 });
+    const section = payload.blocks[0];
+    const text =
+      section.text && "text" in section.text ? section.text.text : "";
+    expect(text).toBe("*BOS* :boston-red-sox: 0 @ 0 :new-york-yankees: *NYY*");
+  });
+
+  test("double-digit score renders cleanly", () => {
+    const play = makeMockPlay({ awayTeam: "TEX", homeTeam: "BAL" });
+    const payload = buildGameHeaderMessage([play], { away: 12, home: 11 });
+    const section = payload.blocks[0];
+    const text =
+      section.text && "text" in section.text ? section.text.text : "";
+    expect(text).toBe(
+      "*TEX* :texas-rangers: 12 @ 11 :baltimore-orioles: *BAL*",
+    );
+  });
+
+  test("context block includes the play count and date", () => {
+    const plays = [
+      makeMockPlay({ playIndex: 1 }),
+      makeMockPlay({ playIndex: 2 }),
+      makeMockPlay({ playIndex: 3 }),
+    ];
+    const payload = buildGameHeaderMessage(plays, { away: 1, home: 1 });
+    const ctx = payload.blocks[1];
+    expect(ctx.type).toBe("context");
+    const ctxEl = ctx.elements?.[0];
+    const ctxText = ctxEl && "text" in ctxEl ? ctxEl.text : "";
+    expect(ctxText).toBe("3 outfield assists detected | 2024-04-09");
+  });
+
+  test("singular outfield assist for single-play games", () => {
+    const payload = buildGameHeaderMessage([makeMockPlay()], {
+      away: 1,
+      home: 0,
+    });
+    const ctxEl = payload.blocks[1].elements?.[0];
+    const ctxText = ctxEl && "text" in ctxEl ? ctxEl.text : "";
+    expect(ctxText).toContain("1 outfield assist detected");
+    expect(ctxText).not.toContain("assists");
+  });
+});
+
+describe("buildPlayReplyMessage", () => {
+  test("returns the same play blocks as the combined builder for one play", () => {
+    const play = makeMockPlay({
+      videoUrl: "https://example.com/v.mp4",
+      videoTitle: "Cool",
+    });
+    const reply = buildPlayReplyMessage(play);
+    // The reply skips header/context/divider — just play blocks.
+    expect(reply.blocks[0].type).toBe("section");
+    const actions = reply.blocks.find((b) => b.type === "actions");
+    expect(actions).toBeDefined();
+  });
+
+  test("no video button when videoUrl is null", () => {
+    const reply = buildPlayReplyMessage(makeMockPlay({ videoUrl: null }));
+    const actions = reply.blocks.find((b) => b.type === "actions");
+    expect(actions).toBeUndefined();
   });
 });
 

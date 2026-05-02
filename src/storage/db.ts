@@ -131,15 +131,26 @@ CREATE TABLE IF NOT EXISTS plays (
 );
 `;
 
-const CREATE_SLACK_MESSAGES_TABLE_SQL = `
-CREATE TABLE IF NOT EXISTS slack_messages (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  game_pk         INTEGER NOT NULL,
+const CREATE_SLACK_GAME_HEADERS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS slack_game_headers (
+  game_pk         INTEGER PRIMARY KEY,
   channel         TEXT    NOT NULL,
   ts              TEXT    NOT NULL,
   posted_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+  last_updated_at TEXT
+);
+`;
+
+const CREATE_SLACK_PLAY_MESSAGES_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS slack_play_messages (
+  game_pk         INTEGER NOT NULL,
+  play_index      INTEGER NOT NULL,
+  channel         TEXT    NOT NULL,
+  ts              TEXT    NOT NULL,
+  parent_ts       TEXT    NOT NULL,
+  posted_at       TEXT    NOT NULL DEFAULT (datetime('now')),
   last_updated_at TEXT,
-  UNIQUE(game_pk)
+  PRIMARY KEY (game_pk, play_index)
 );
 `;
 
@@ -204,9 +215,11 @@ export function createDatabase(dbPath: string): Database {
     "CREATE INDEX IF NOT EXISTS idx_plays_video_url_null ON plays(date) WHERE video_url IS NULL;",
   );
 
-  db.run(CREATE_SLACK_MESSAGES_TABLE_SQL);
+  db.run("DROP TABLE IF EXISTS slack_messages;");
+  db.run(CREATE_SLACK_GAME_HEADERS_TABLE_SQL);
+  db.run(CREATE_SLACK_PLAY_MESSAGES_TABLE_SQL);
   db.run(
-    "CREATE INDEX IF NOT EXISTS idx_slack_messages_game_pk ON slack_messages(game_pk);",
+    "CREATE INDEX IF NOT EXISTS idx_slack_play_messages_ts ON slack_play_messages(channel, ts);",
   );
 
   return db;

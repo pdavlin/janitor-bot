@@ -1,6 +1,6 @@
 /**
  * Tests for makeBackfillNotifier — the bridge between runBackfillCycle's
- * onSuccess hook and Slack chat.update / thread reply.
+ * onSuccess hook and the Slack per-play chat.update + thread reply.
  *
  * Mocks globalThis.fetch and uses an in-memory SQLite database so the
  * notifier walks the real lookup → update → mark → reply path.
@@ -9,7 +9,10 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createDatabase, insertPlay } from "../../storage/db";
-import { recordSlackMessage } from "../slack-messages-store";
+import {
+  recordGameHeader,
+  recordPlayMessage,
+} from "../slack-messages-store";
 import { makeBackfillNotifier } from "../backfill-notifier";
 import type { Logger } from "../../logger";
 import type { DetectedPlay } from "../../types/play";
@@ -31,10 +34,16 @@ interface FetchCall {
   body: Record<string, unknown> | undefined;
 }
 
-function mockFetchRecording(): { calls: FetchCall[]; setResponses: (responses: Response[]) => void } {
+function mockFetchRecording(): {
+  calls: FetchCall[];
+  setResponses: (responses: Response[]) => void;
+} {
   const calls: FetchCall[] = [];
   let queue: Response[] = [];
-  const fn = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+  const fn = (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => {
     calls.push({
       url: String(input),
       body: init?.body ? JSON.parse(init.body as string) : undefined,
@@ -97,7 +106,7 @@ beforeEach(() => {
 });
 
 describe("makeBackfillNotifier", () => {
-  test("no slack message ref means no fetch is made", async () => {
+  test("no play message ref means no fetch is made", async () => {
     const recorder = mockFetchRecording();
     const logger = makeSilentLogger();
     const notifier = makeBackfillNotifier(
@@ -118,7 +127,7 @@ describe("makeBackfillNotifier", () => {
     expect(recorder.calls).toHaveLength(0);
   });
 
-  test("with ref: posts chat.update then chat.postMessage thread reply", async () => {
+  test("with ref: chat.update on play ts, then thread reply on parent ts", async () => {
     const recorder = mockFetchRecording();
     recorder.setResponses([
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
@@ -130,7 +139,8 @@ describe("makeBackfillNotifier", () => {
 
     const play = makePlay({ videoUrl: "https://example.com/v.mp4" });
     insertPlay(db, play);
-    recordSlackMessage(db, play.gamePk, "C1", "1700000000.000100");
+    recordGameHeader(db, play.gamePk, "C1", "header.ts");
+    recordPlayMessage(db, play.gamePk, play.playIndex, "C1", "play.ts", "header.ts");
 
     const event: BackfillSuccessEvent = {
       gamePk: play.gamePk,
@@ -145,18 +155,19 @@ describe("makeBackfillNotifier", () => {
     expect(recorder.calls[0].url).toBe("https://slack.com/api/chat.update");
     expect(recorder.calls[0].body).toMatchObject({
       channel: "C1",
-      ts: "1700000000.000100",
+      ts: "play.ts",
     });
     expect(recorder.calls[1].url).toBe("https://slack.com/api/chat.postMessage");
     expect(recorder.calls[1].body).toMatchObject({
       channel: "C1",
-      thread_ts: "1700000000.000100",
+      thread_ts: "header.ts",
     });
 
-    // last_updated_at should be stamped
     const row = db
-      .prepare("SELECT last_updated_at FROM slack_messages WHERE game_pk = ?")
-      .get(play.gamePk) as { last_updated_at: string | null };
+      .prepare(
+        "SELECT last_updated_at FROM slack_play_messages WHERE game_pk = ? AND play_index = ?",
+      )
+      .get(play.gamePk, play.playIndex) as { last_updated_at: string | null };
     expect(row.last_updated_at).not.toBeNull();
   });
 
@@ -177,7 +188,8 @@ describe("makeBackfillNotifier", () => {
 
     const play = makePlay();
     insertPlay(db, play);
-    recordSlackMessage(db, play.gamePk, "C1", "1.0");
+    recordGameHeader(db, play.gamePk, "C1", "header.ts");
+    recordPlayMessage(db, play.gamePk, play.playIndex, "C1", "play.ts", "header.ts");
 
     await notifier({
       gamePk: play.gamePk,
@@ -191,21 +203,47 @@ describe("makeBackfillNotifier", () => {
     expect(logger.warn).toHaveBeenCalled();
   });
 
-  test("concurrent calls for same gamePk serialize", async () => {
+  test("rescued play row missing in DB skips update entirely", async () => {
     const recorder = mockFetchRecording();
-    const order: string[] = [];
+    const logger = makeSilentLogger();
+    const notifier = makeBackfillNotifier(
+      db,
+      { botToken: "xoxb-x", channelId: "C1" },
+      logger,
+    );
 
+    // Reference exists but no play row was inserted.
+    recordGameHeader(db, 745433, "C1", "header.ts");
+    recordPlayMessage(db, 745433, 42, "C1", "play.ts", "header.ts");
+
+    await notifier({
+      gamePk: 745433,
+      playIndex: 42,
+      videoUrl: "https://example.com/v.mp4",
+      videoTitle: "Watch",
+    });
+
+    expect(recorder.calls).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  test("concurrent calls for same (gamePk, playIndex) serialize", async () => {
+    const order: string[] = [];
+    let callIdx = 0;
     let resolveFirst: (v: Response) => void = () => {};
     const firstResponse = new Promise<Response>((resolve) => {
       resolveFirst = resolve;
     });
 
-    let callIdx = 0;
+    const calls: FetchCall[] = [];
     globalThis.fetch = Object.assign(
       mock(
-        (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        (
+          input: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1],
+        ) => {
           callIdx++;
-          recorder.calls.push({
+          calls.push({
             url: String(input),
             body: init?.body ? JSON.parse(init.body as string) : undefined,
           });
@@ -255,7 +293,8 @@ describe("makeBackfillNotifier", () => {
 
     const play = makePlay();
     insertPlay(db, play);
-    recordSlackMessage(db, play.gamePk, "C1", "1.0");
+    recordGameHeader(db, play.gamePk, "C1", "header.ts");
+    recordPlayMessage(db, play.gamePk, play.playIndex, "C1", "play.ts", "header.ts");
 
     const event: BackfillSuccessEvent = {
       gamePk: play.gamePk,
@@ -267,7 +306,6 @@ describe("makeBackfillNotifier", () => {
     const p1 = notifier(event);
     const p2 = notifier(event);
 
-    // p2 must not have started its first fetch until p1 finishes
     await Bun.sleep(20);
     expect(callIdx).toBe(1);
 
@@ -275,8 +313,6 @@ describe("makeBackfillNotifier", () => {
 
     await Promise.all([p1, p2]);
 
-    // Order asserts the second invocation's update only began after the
-    // first invocation's thread reply ended (full serialization).
     expect(order).toEqual([
       "first-update-start",
       "first-update-end",
@@ -287,5 +323,80 @@ describe("makeBackfillNotifier", () => {
       "second-thread-start",
       "second-thread-end",
     ]);
+  });
+
+  test("rescues for different plays in same game run independently", async () => {
+    // No serialization across plays — both updates should overlap rather
+    // than one waiting on the other. We assert that fetch starts for the
+    // second play before the first play's pipeline finishes.
+    const order: string[] = [];
+    let callIdx = 0;
+    let resolveFirstPlay: (v: Response) => void = () => {};
+    const firstPlayUpdate = new Promise<Response>((resolve) => {
+      resolveFirstPlay = resolve;
+    });
+
+    globalThis.fetch = Object.assign(
+      mock(
+        (
+          _input: Parameters<typeof fetch>[0],
+          _init?: Parameters<typeof fetch>[1],
+        ) => {
+          callIdx++;
+          if (callIdx === 1) {
+            order.push("play1-update-start");
+            return firstPlayUpdate;
+          }
+          if (callIdx === 2) {
+            order.push("play2-update-start");
+            return Promise.resolve(
+              new Response(JSON.stringify({ ok: true }), { status: 200 }),
+            );
+          }
+          // any further calls (thread replies) just succeed
+          return Promise.resolve(
+            new Response(JSON.stringify({ ok: true }), { status: 200 }),
+          );
+        },
+      ),
+      { preconnect: mock((_url: string | URL) => {}) },
+    );
+
+    const logger = makeSilentLogger();
+    const notifier = makeBackfillNotifier(
+      db,
+      { botToken: "xoxb-x", channelId: "C1" },
+      logger,
+    );
+
+    const play1 = makePlay({ playIndex: 1 });
+    const play2 = makePlay({ playIndex: 2 });
+    insertPlay(db, play1);
+    insertPlay(db, play2);
+    recordGameHeader(db, play1.gamePk, "C1", "header.ts");
+    recordPlayMessage(db, play1.gamePk, 1, "C1", "play.1.ts", "header.ts");
+    recordPlayMessage(db, play2.gamePk, 2, "C1", "play.2.ts", "header.ts");
+
+    const p1 = notifier({
+      gamePk: play1.gamePk,
+      playIndex: 1,
+      videoUrl: "https://example.com/v1.mp4",
+      videoTitle: "Watch",
+    });
+    const p2 = notifier({
+      gamePk: play2.gamePk,
+      playIndex: 2,
+      videoUrl: "https://example.com/v2.mp4",
+      videoTitle: "Watch",
+    });
+
+    await Bun.sleep(20);
+    // Second play's update should have started even though play 1 is blocked.
+    expect(order).toEqual(["play1-update-start", "play2-update-start"]);
+
+    resolveFirstPlay(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    await Promise.all([p1, p2]);
   });
 });

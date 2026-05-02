@@ -15,8 +15,12 @@
 
 import type { Logger } from "../logger";
 import type { DetectedPlay } from "../types/play";
-import type { SlackPayload } from "./slack-formatter";
-import { buildGameMessage } from "./slack-formatter";
+import type { GameFinalScore, SlackPayload } from "./slack-formatter";
+import {
+  buildGameHeaderMessage,
+  buildGameMessage,
+  buildPlayReplyMessage,
+} from "./slack-formatter";
 
 const SLACK_API_BASE = "https://slack.com/api";
 
@@ -192,6 +196,31 @@ export async function postThreadReply(
 }
 
 /**
+ * Posts a thread message and returns the channel + ts so the caller can
+ * record the per-play reference. `postThreadReply` returns a boolean for
+ * fire-and-forget announcements; this variant is for posts whose ts the
+ * caller needs to remember (the per-play replies under a game header).
+ */
+async function postThreadMessage(
+  config: SlackClientConfig,
+  channel: string,
+  threadTs: string,
+  payload: SlackPayload,
+  logger: Logger,
+): Promise<PostMessageResult | null> {
+  if (!config.botToken) {
+    logger.debug("postThreadMessage skipped: no bot token");
+    return null;
+  }
+  return callSlackApi<PostMessageResult>(
+    "chat.postMessage",
+    { channel, thread_ts: threadTs, blocks: payload.blocks },
+    config.botToken,
+    logger,
+  );
+}
+
+/**
  * Sends a JSON payload to a Slack webhook URL with retry logic.
  *
  * Makes up to 3 attempts with exponential backoff (1s, 2s) between
@@ -245,24 +274,29 @@ export async function sendWebhook(
   return false;
 }
 
-/**
- * Per-game initial post helper used by the scheduler.
- *
- * Groups detected plays by gamePk so each game produces a single Slack
- * message, then routes the payload through `postMessage` (bot-token or
- * webhook fallback). Returns the per-game result so the caller can record
- * (channel, ts) tuples for later edits.
- */
-export async function sendGameNotifications(
-  plays: DetectedPlay[],
-  config: SlackClientConfig,
-  logger: Logger,
-): Promise<{ gamePk: number; result: PostMessageResult | null }[]> {
-  if (plays.length === 0) {
-    logger.debug("no plays to notify about");
-    return [];
-  }
+/** Result tuple for a single play's thread reply post. */
+export interface PerPlayNotificationResult {
+  playIndex: number;
+  result: PostMessageResult | null;
+}
 
+/** Aggregate result for one game: header post + per-play replies. */
+export interface PerGameNotificationResult {
+  gamePk: number;
+  /**
+   * Header post result. In bot-token mode this is the parent header; in
+   * webhook mode this carries the (null) result of the combined message
+   * post — webhooks have no addressable ts.
+   */
+  header: PostMessageResult | null;
+  /**
+   * One entry per play. In webhook mode the array still lists every play
+   * (so callers can iterate uniformly) but each `result` is null.
+   */
+  plays: PerPlayNotificationResult[];
+}
+
+function groupByGame(plays: DetectedPlay[]): Map<number, DetectedPlay[]> {
   const grouped = new Map<number, DetectedPlay[]>();
   for (const play of plays) {
     const existing = grouped.get(play.gamePk);
@@ -272,26 +306,90 @@ export async function sendGameNotifications(
       grouped.set(play.gamePk, [play]);
     }
   }
+  return grouped;
+}
 
-  const results: { gamePk: number; result: PostMessageResult | null }[] = [];
+/**
+ * Per-game initial post helper used by the scheduler.
+ *
+ * In bot-token mode posts a header, then each play as a thread reply under
+ * that header so reactions on a play attach to the play (not the whole game).
+ * If the header post fails, play replies are skipped for that game.
+ *
+ * In webhook mode falls back to the legacy combined-message format because
+ * webhooks have no addressable ts to thread replies under.
+ */
+export async function sendGameNotifications(
+  plays: DetectedPlay[],
+  scoresByGame: Map<number, GameFinalScore>,
+  config: SlackClientConfig,
+  logger: Logger,
+): Promise<PerGameNotificationResult[]> {
+  if (plays.length === 0) {
+    logger.debug("no plays to notify about");
+    return [];
+  }
+
+  const grouped = groupByGame(plays);
+  const mode = determineSlackMode(config);
+  const results: PerGameNotificationResult[] = [];
 
   for (const [gamePk, gamePlays] of grouped) {
-    const payload = buildGameMessage(gamePlays);
     logger.info("sending slack notification", {
       gamePk,
       playCount: gamePlays.length,
-      mode: determineSlackMode(config),
+      mode,
     });
 
-    const result = await postMessage(config, payload, logger);
-    results.push({ gamePk, result });
-
-    if (result) {
-      logger.info("slack notification sent", {
+    if (mode === "bot_token") {
+      const score = scoresByGame.get(gamePk) ?? { away: 0, home: 0 };
+      const headerPayload = buildGameHeaderMessage(gamePlays, score);
+      const headerResult = await postMessage(config, headerPayload, logger);
+      if (!headerResult) {
+        logger.warn("header post failed, skipping play replies", { gamePk });
+        results.push({ gamePk, header: null, plays: [] });
+        continue;
+      }
+      logger.info("slack header sent", {
         gamePk,
-        channel: result.channel,
-        ts: result.ts,
+        channel: headerResult.channel,
+        ts: headerResult.ts,
       });
+
+      const playResults: PerPlayNotificationResult[] = [];
+      for (const play of gamePlays) {
+        const replyPayload = buildPlayReplyMessage(play);
+        const replyResult = await postThreadMessage(
+          config,
+          headerResult.channel,
+          headerResult.ts,
+          replyPayload,
+          logger,
+        );
+        if (!replyResult) {
+          logger.warn("play reply failed", {
+            gamePk,
+            playIndex: play.playIndex,
+          });
+        }
+        playResults.push({ playIndex: play.playIndex, result: replyResult });
+      }
+      results.push({ gamePk, header: headerResult, plays: playResults });
+    } else {
+      const payload = buildGameMessage(gamePlays);
+      const result = await postMessage(config, payload, logger);
+      results.push({
+        gamePk,
+        header: result,
+        plays: gamePlays.map((p) => ({ playIndex: p.playIndex, result: null })),
+      });
+      if (result) {
+        logger.info("slack notification sent", {
+          gamePk,
+          channel: result.channel,
+          ts: result.ts,
+        });
+      }
     }
   }
 

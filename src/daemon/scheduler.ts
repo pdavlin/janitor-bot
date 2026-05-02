@@ -18,13 +18,19 @@ import { fetchSchedule } from "../api/mlb-client";
 import type { ScheduleGame } from "../types/mlb-api";
 import { processGame, extractGameDate, scanDate } from "../pipeline";
 import { insertPlays } from "../storage/db";
-import { filterByMinTier } from "../notifications/slack-formatter";
+import {
+  filterByMinTier,
+  type GameFinalScore,
+} from "../notifications/slack-formatter";
 import {
   sendGameNotifications,
   determineSlackMode,
   type SlackClientConfig,
 } from "../notifications/slack-client";
-import { recordSlackMessage } from "../notifications/slack-messages-store";
+import {
+  recordGameHeader,
+  recordPlayMessage,
+} from "../notifications/slack-messages-store";
 import { makeBackfillNotifier } from "../notifications/backfill-notifier";
 import { runBackfillCycle } from "./backfill";
 import type { Config } from "../config";
@@ -61,6 +67,9 @@ interface TrackedGame {
   state: GameTrackingState;
   awayTeam: string;
   homeTeam: string;
+  /** Most recent final score known for the game. Populated when the game
+   *  reaches Final (or on init for games that started Final). */
+  finalScore: GameFinalScore | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +207,14 @@ function toTrackedGame(game: ScheduleGame): TrackedGame {
         ? "live"
         : "pending";
 
+  const finalScore: GameFinalScore | null =
+    state === "final"
+      ? {
+          away: game.teams.away.score ?? 0,
+          home: game.teams.home.score ?? 0,
+        }
+      : null;
+
   return {
     gamePk: game.gamePk,
     scheduledStart: new Date(game.gameDate),
@@ -205,6 +222,7 @@ function toTrackedGame(game: ScheduleGame): TrackedGame {
     state,
     awayTeam: game.teams.away.team.name,
     homeTeam: game.teams.home.team.name,
+    finalScore,
   };
 }
 
@@ -299,25 +317,64 @@ async function handleFinalGame(
   if (determineSlackMode(slackConfig) !== "disabled") {
     const filtered = filterByMinTier(plays, config.minTier);
     if (filtered.length > 0) {
+      const scoresByGame = new Map<number, GameFinalScore>();
+      scoresByGame.set(
+        game.gamePk,
+        game.finalScore ?? { away: 0, home: 0 },
+      );
+
       try {
-        const results = await sendGameNotifications(filtered, slackConfig, logger);
-        let messagesSent = 0;
-        for (const { gamePk, result } of results) {
-          if (result) {
-            messagesSent++;
+        const results = await sendGameNotifications(
+          filtered,
+          scoresByGame,
+          slackConfig,
+          logger,
+        );
+        let headersSent = 0;
+        let playsSent = 0;
+        for (const perGame of results) {
+          if (perGame.header) {
+            headersSent++;
             try {
-              recordSlackMessage(db, gamePk, result.channel, result.ts);
+              recordGameHeader(
+                db,
+                perGame.gamePk,
+                perGame.header.channel,
+                perGame.header.ts,
+              );
             } catch (err) {
-              logger.error("failed to record slack message reference", {
-                gamePk,
+              logger.error("failed to record game header reference", {
+                gamePk: perGame.gamePk,
                 error: err instanceof Error ? err.message : String(err),
               });
+            }
+            for (const playEntry of perGame.plays) {
+              if (playEntry.result) {
+                playsSent++;
+                try {
+                  recordPlayMessage(
+                    db,
+                    perGame.gamePk,
+                    playEntry.playIndex,
+                    playEntry.result.channel,
+                    playEntry.result.ts,
+                    perGame.header.ts,
+                  );
+                } catch (err) {
+                  logger.error("failed to record play message reference", {
+                    gamePk: perGame.gamePk,
+                    playIndex: playEntry.playIndex,
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                }
+              }
             }
           }
         }
         logger.info("slack notifications complete", {
           gamePk: game.gamePk,
-          messagesSent,
+          headersSent,
+          playsSent,
           totalAttempted: results.length,
         });
       } catch (err) {
@@ -402,6 +459,10 @@ async function updateGameStates(
 
     if (newAbstractState === "Final") {
       tracked_game.state = "final";
+      tracked_game.finalScore = {
+        away: fresh.teams.away.score ?? 0,
+        home: fresh.teams.home.score ?? 0,
+      };
       logger.info("game state transition", {
         gamePk: tracked_game.gamePk,
         from: previousState,
