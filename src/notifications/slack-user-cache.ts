@@ -46,13 +46,14 @@ export async function getUserInfo(
 
   if (!config.botToken) return null;
 
+  // users.info quietly ignores JSON bodies; must use form encoding.
   const result = await callSlackApi<{
     user: {
       is_bot: boolean;
       is_restricted: boolean;
       is_ultra_restricted: boolean;
     };
-  }>("users.info", { user: userId }, config.botToken, logger);
+  }>("users.info", { user: userId }, config.botToken, logger, "form");
 
   if (!result) return null;
 

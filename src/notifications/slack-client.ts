@@ -58,25 +58,61 @@ const RETRY_BASE_DELAY_MS = 1000;
 const MAX_RETRIES = 3;
 
 /**
+ * Body encoding for Slack Web API requests.
+ *
+ * Most modern write methods (`chat.postMessage`, `chat.update`, etc.) accept
+ * JSON bodies. Older read methods like `users.info` quietly ignore JSON
+ * bodies and respond as if no arguments were passed (returning errors like
+ * `user_not_found`). For those, the caller must opt into form encoding.
+ */
+export type SlackApiEncoding = "json" | "form";
+
+function buildRequestBody(
+  body: Record<string, unknown>,
+  encoding: SlackApiEncoding,
+): { contentType: string; payload: string } {
+  if (encoding === "form") {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(body)) {
+      if (value === undefined || value === null) continue;
+      params.set(key, String(value));
+    }
+    return {
+      contentType: "application/x-www-form-urlencoded; charset=utf-8",
+      payload: params.toString(),
+    };
+  }
+  return {
+    contentType: "application/json; charset=utf-8",
+    payload: JSON.stringify(body),
+  };
+}
+
+/**
  * Issues a single POST to a slack.com/api method and returns the parsed body
  * when the API reports `ok: true`. All non-ok / 429 cases log and return null
  * so callers can degrade gracefully.
+ *
+ * Defaults to JSON encoding. Pass `encoding: "form"` for older read methods
+ * like `users.info` that don't accept JSON bodies.
  */
 export async function callSlackApi<T>(
   method: string,
   body: Record<string, unknown>,
   botToken: string,
   logger: Logger,
+  encoding: SlackApiEncoding = "json",
 ): Promise<T | null> {
+  const { contentType, payload } = buildRequestBody(body, encoding);
   let response: Response;
   try {
     response = await fetch(`${SLACK_API_BASE}/${method}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${botToken}`,
-        "Content-Type": "application/json; charset=utf-8",
+        "Content-Type": contentType,
       },
-      body: JSON.stringify(body),
+      body: payload,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
