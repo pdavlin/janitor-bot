@@ -285,6 +285,24 @@ describe("detectOutfieldAssists", () => {
     expect(results[1].playIndex).toBe(25);
   });
 
+  test("normalizes outBase '4B' to 'Home'", () => {
+    // Some MLB live-feed events report plate-out plays with outBase "4B"
+    // instead of "score" or "Home". The normalizer must collapse all three
+    // so downstream consumers see a single label.
+    const credits = [
+      makeCredit("f_assist_of", "9", "RF", 500),
+      makeCredit("f_putout", "2", "C", 501),
+    ];
+    const runner = makeRunner({ isOut: true, outBase: "4B", credits });
+    const play = makePlay([runner]);
+    const feed = makeLiveFeed([play]);
+
+    const results = detectOutfieldAssists(feed, 12345, "2025-06-15");
+
+    expect(results).toHaveLength(1);
+    expect(results[0].targetBase).toBe("Home");
+  });
+
   test("builds credit chain from all credits on the runner", () => {
     // RF -> SS -> C relay chain
     const credits = [

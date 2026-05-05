@@ -11,6 +11,7 @@
     "video-issues": "bun run src/cli/video-issues.ts",
     "verify:slack": "bun run scripts/verify-slack.ts",
     "weekly-review": "bun run src/cli/weekly-review.ts",
+    "backfill:target-base-home": "bun run scripts/backfill-target-base-home.ts",
     "check:leakage": "bun run scripts/check-no-transcript-leakage.ts",
     "test": "bun test",
     "check": "tsc --noEmit"

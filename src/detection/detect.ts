@@ -35,11 +35,19 @@ const SKIP_EVENTS: ReadonlySet<string> = new Set([
   "Offensive Sub",
 ]);
 
-/** Readable labels for base names returned by the API. */
+/**
+ * Readable labels for base names returned by the API.
+ *
+ * The MLB live feed uses three different tokens for plays at home plate
+ * depending on the underlying event type: `"score"`, `"Home"`, and
+ * `"4B"`. All three normalize to `"Home"` so downstream consumers
+ * (ranking, Slack formatter, weekly-review CLI) see a single value.
+ */
 const BASE_LABELS: Record<string, string> = {
   "1B": "1B",
   "2B": "2B",
   "3B": "3B",
+  "4B": "Home",
   score: "Home",
   Home: "Home",
 };
