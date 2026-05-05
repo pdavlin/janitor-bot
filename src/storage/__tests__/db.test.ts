@@ -540,7 +540,7 @@ describe("play_id and fetch_status persistence", () => {
         playIndex: 3,
         runnerId: 4,
       }),
-      // Excluded: no_video_found is terminal
+      // Eligible: no_video_found is retryable (Savant clip-cut lag)
       makeMockPlay({
         playId: "play-d",
         fetchStatus: "no_video_found",
@@ -560,7 +560,7 @@ describe("play_id and fetch_status persistence", () => {
 
     const candidates = queryBackfillCandidates(db, 2);
     const playIds = candidates.map((c) => c.playId).sort();
-    expect(playIds).toEqual(["play-a", "play-b"]);
+    expect(playIds).toEqual(["play-a", "play-b", "play-d"]);
   });
 
   test("queryBackfillCandidates respects the windowDays cutoff", () => {

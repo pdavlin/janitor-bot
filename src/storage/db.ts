@@ -568,7 +568,12 @@ export interface BackfillCandidate {
  *   - video_url is NULL (we don't already have a video)
  *   - play_id is NOT NULL (we have a playId to query Savant with)
  *   - date falls within the configurable window (default last 2 days)
- *   - fetch_status is not in a terminal state ('success', 'no_video_found')
+ *   - fetch_status is not 'success'
+ *
+ * 'no_video_found' is retryable: Savant cuts highlight clips with a delay
+ * after games finalize, so the first probe often returns the literal
+ * "No Video Found" page even though the clip later appears. The windowDays
+ * cutoff is the only stop condition.
  *
  * DISTINCT collapses (game_pk, play_index, play_id) tuples so the caller
  * makes one Savant request per play even when multiple runner rows share it.
@@ -591,7 +596,7 @@ export function queryBackfillCandidates(
     WHERE video_url IS NULL
       AND play_id IS NOT NULL
       AND date >= date('now', '-${windowDays} days')
-      AND (fetch_status IS NULL OR fetch_status NOT IN ('success', 'no_video_found'))
+      AND (fetch_status IS NULL OR fetch_status != 'success')
     ORDER BY date DESC, game_pk, play_index;
   `;
 

@@ -174,7 +174,7 @@ describe("runBackfillCycle", () => {
     }
   });
 
-  test("rows with terminal fetch_status='no_video_found' are skipped", async () => {
+  test("rows with fetch_status='no_video_found' are retried (Savant cuts clips with a lag)", async () => {
     insertPlay(
       db,
       makeMockPlay({ playId: "abc", fetchStatus: "no_video_found" }),
@@ -188,8 +188,13 @@ describe("runBackfillCycle", () => {
 
     const stats = await runBackfillCycle(db, makeSilentLogger());
 
-    expect(calls).toBe(0);
-    expect(stats.attempted).toBe(0);
+    expect(calls).toBe(1);
+    expect(stats.attempted).toBe(1);
+    expect(stats.succeeded).toBe(1);
+
+    const row = queryPlays(db, { limit: 10 })[0];
+    expect(row.fetchStatus).toBe("success");
+    expect(row.videoUrl).not.toBeNull();
   });
 
   test("rows older than the window are excluded", async () => {
