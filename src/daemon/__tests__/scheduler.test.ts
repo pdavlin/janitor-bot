@@ -19,6 +19,7 @@ function makeTestConfig(): Config {
     slackWebhookUrl: undefined,
     slackBotToken: undefined,
     slackChannelId: undefined,
+    slackSigningSecret: undefined,
     pollIntervalMinutes: 1,
     backfillIntervalMinutes: 30,
     dbPath: ":memory:",

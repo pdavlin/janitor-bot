@@ -33,6 +33,7 @@ import {
 } from "../notifications/slack-messages-store";
 import { makeBackfillNotifier } from "../notifications/backfill-notifier";
 import { runBackfillCycle } from "./backfill";
+import { runSnapshotLoop } from "./snapshot-job";
 import type { Config } from "../config";
 import type { Logger } from "../logger";
 import type { Database } from "bun:sqlite";
@@ -179,6 +180,9 @@ function getTomorrowDate(): string {
 
 /** Six hours in milliseconds. Games not Final after this are abandoned. */
 const ABANDON_THRESHOLD_MS = 6 * 60 * 60 * 1000;
+
+/** Fifteen minutes in milliseconds. Cadence of the vote snapshot job. */
+const SNAPSHOT_INTERVAL_MS = 15 * 60 * 1000;
 
 /** Thirty minutes in milliseconds. Pre-game buffer for schedule fetching. */
 const PRE_GAME_BUFFER_MS = 30 * 60 * 1000;
@@ -747,6 +751,11 @@ export async function startScheduler(options: SchedulerOptions): Promise<void> {
   // Spawn the Savant video backfill loop as a peer task. Fire-and-forget:
   // it observes the shared shutdown flag and exits when the main loop does.
   void runBackfillLoop(db, logger, backfillIntervalMs, isShuttingDown, backfillNotifier);
+
+  // Spawn the vote snapshot loop. Same fire-and-forget shape as the backfill
+  // loop above; it walks slack_play_messages on a 15-minute tick and writes
+  // a vote_snapshots row for any play whose 24h post window has elapsed.
+  void runSnapshotLoop(db, logger, SNAPSHOT_INTERVAL_MS, isShuttingDown);
 
   await backfillMissedDays(options);
 

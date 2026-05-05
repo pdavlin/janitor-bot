@@ -154,6 +154,35 @@ CREATE TABLE IF NOT EXISTS slack_play_messages (
 );
 `;
 
+const CREATE_VOTES_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS votes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     TEXT    NOT NULL,
+  game_pk     INTEGER NOT NULL,
+  play_index  INTEGER NOT NULL,
+  direction   TEXT    NOT NULL CHECK (direction IN ('fire', 'trash')),
+  action      TEXT    NOT NULL CHECK (action IN ('added', 'removed')),
+  event_ts    TEXT    NOT NULL,
+  received_at TEXT    NOT NULL,
+  post_window INTEGER NOT NULL DEFAULT 0
+);
+`;
+
+const CREATE_VOTE_SNAPSHOTS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS vote_snapshots (
+  game_pk             INTEGER NOT NULL,
+  play_index          INTEGER NOT NULL,
+  fire_count          INTEGER NOT NULL,
+  trash_count         INTEGER NOT NULL,
+  net_score           INTEGER NOT NULL,
+  voter_count         INTEGER NOT NULL,
+  snapshotted_at      TEXT    NOT NULL,
+  tier_review_flagged INTEGER NOT NULL DEFAULT 0,
+  tier_review_reason  TEXT,
+  PRIMARY KEY (game_pk, play_index)
+);
+`;
+
 const INSERT_PLAY_SQL = `
 INSERT INTO plays (
   game_pk, play_index, date, fielder_id, fielder_name, fielder_position,
@@ -220,6 +249,16 @@ export function createDatabase(dbPath: string): Database {
   db.run(CREATE_SLACK_PLAY_MESSAGES_TABLE_SQL);
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_slack_play_messages_ts ON slack_play_messages(channel, ts);",
+  );
+
+  db.run(CREATE_VOTES_TABLE_SQL);
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_votes_play ON votes(game_pk, play_index, direction, user_id);",
+  );
+
+  db.run(CREATE_VOTE_SNAPSHOTS_TABLE_SQL);
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_snapshots_flagged ON vote_snapshots(tier_review_flagged) WHERE tier_review_flagged = 1;",
   );
 
   return db;

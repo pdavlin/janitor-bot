@@ -62,7 +62,7 @@ const MAX_RETRIES = 3;
  * when the API reports `ok: true`. All non-ok / 429 cases log and return null
  * so callers can degrade gracefully.
  */
-async function callSlackApi<T>(
+export async function callSlackApi<T>(
   method: string,
   body: Record<string, unknown>,
   botToken: string,
