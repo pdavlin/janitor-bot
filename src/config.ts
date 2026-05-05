@@ -9,6 +9,7 @@ export interface Config {
   slackWebhookUrl: string | undefined;
   slackBotToken: string | undefined;
   slackChannelId: string | undefined;
+  slackSigningSecret: string | undefined;
   pollIntervalMinutes: number;
   backfillIntervalMinutes: number;
   dbPath: string;
@@ -99,6 +100,7 @@ export function loadConfig(): Config {
     slackWebhookUrl: process.env.SLACK_WEBHOOK_URL,
     slackBotToken,
     slackChannelId,
+    slackSigningSecret: process.env.SLACK_SIGNING_SECRET,
     pollIntervalMinutes,
     backfillIntervalMinutes,
     dbPath: process.env.DB_PATH ?? "./janitor-throws.db",

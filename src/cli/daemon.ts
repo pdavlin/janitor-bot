@@ -57,6 +57,12 @@ async function main(): Promise<void> {
     logger,
     port: config.port,
     getSchedulerStatus,
+    slackSigningSecret: config.slackSigningSecret,
+    slackConfig: {
+      botToken: config.slackBotToken,
+      channelId: config.slackChannelId,
+      webhookUrl: config.slackWebhookUrl,
+    },
   });
 
   logger.info("http server started", { port: config.port });

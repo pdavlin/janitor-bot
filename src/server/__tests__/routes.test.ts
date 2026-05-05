@@ -13,10 +13,15 @@ import {
   beforeAll,
   afterAll,
   beforeEach,
+  afterEach,
   mock,
 } from "bun:test";
+import { createHmac } from "node:crypto";
 import { startServer } from "../routes";
 import { createDatabase, insertPlays } from "../../storage/db";
+import { recordPlayMessage } from "../../notifications/slack-messages-store";
+import { clearEventLru } from "../../notifications/slack-events";
+import { clearUserCache } from "../../notifications/slack-user-cache";
 import type { SchedulerStatus } from "../../daemon/scheduler";
 import type { DetectedPlay } from "../../types/play";
 import type { Database } from "bun:sqlite";
@@ -492,5 +497,202 @@ describe("HTTP server routes", () => {
       expect(res.status).toBe(400);
       expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /slack/events
+// ---------------------------------------------------------------------------
+
+describe("POST /slack/events", () => {
+  const SIGNING_SECRET = "test-signing-secret";
+
+  let db: Database;
+  let server: Server<undefined>;
+  let baseUrl: string;
+  let originalFetch: typeof fetch;
+
+  function sign(timestamp: string, body: string): string {
+    return `v0=${createHmac("sha256", SIGNING_SECRET).update(`v0:${timestamp}:${body}`).digest("hex")}`;
+  }
+
+  async function postEvent(
+    body: string,
+    headers: Record<string, string> = {},
+  ): Promise<Response> {
+    return fetch(`${baseUrl}/slack/events`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body,
+    });
+  }
+
+  beforeAll(() => {
+    db = createDatabase(":memory:");
+    server = startServer({
+      db,
+      dbPath: ":memory:",
+      logger: makeSilentLogger(),
+      port: 0,
+      getSchedulerStatus: makeSchedulerStatus,
+      slackSigningSecret: SIGNING_SECRET,
+      slackConfig: { botToken: "xoxb-test" },
+    });
+    baseUrl = `http://localhost:${server.port}`;
+  });
+
+  afterAll(() => {
+    server.stop(true);
+    db.close();
+  });
+
+  beforeEach(() => {
+    db.run("DELETE FROM votes");
+    db.run("DELETE FROM slack_play_messages");
+    clearEventLru();
+    clearUserCache();
+
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      // Intercept Slack users.info; pass everything else through to the test server.
+      if (url.includes("slack.com/api/users.info")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            user: { is_bot: false, is_restricted: false, is_ultra_restricted: false },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return originalFetch(input, init);
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("url_verification round-trip returns the challenge", async () => {
+    const body = JSON.stringify({ type: "url_verification", challenge: "abc123" });
+    const ts = String(Math.floor(Date.now() / 1000));
+    const res = await postEvent(body, {
+      "x-slack-request-timestamp": ts,
+      "x-slack-signature": sign(ts, body),
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.challenge).toBe("abc123");
+  });
+
+  test("rejects requests with an invalid signature with 401", async () => {
+    const body = JSON.stringify({ type: "url_verification", challenge: "abc" });
+    const ts = String(Math.floor(Date.now() / 1000));
+    const res = await postEvent(body, {
+      "x-slack-request-timestamp": ts,
+      "x-slack-signature": "v0=deadbeef".padEnd(69, "0"),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("rejects requests missing signature headers with 401", async () => {
+    const body = JSON.stringify({ type: "url_verification", challenge: "abc" });
+    const res = await postEvent(body);
+    expect(res.status).toBe(401);
+  });
+
+  test("valid signed reaction_added inserts a vote row", async () => {
+    recordPlayMessage(db, 9000, 5, "C1", "100.001", "99.000");
+
+    const body = JSON.stringify({
+      type: "event_callback",
+      event_id: "Ev_signed_1",
+      event: {
+        type: "reaction_added",
+        user: "U999",
+        reaction: "fire",
+        item: { type: "message", channel: "C1", ts: "100.001" },
+        event_ts: "100.002",
+      },
+    });
+    const ts = String(Math.floor(Date.now() / 1000));
+    const res = await postEvent(body, {
+      "x-slack-request-timestamp": ts,
+      "x-slack-signature": sign(ts, body),
+    });
+    expect(res.status).toBe(200);
+
+    // Wait for the queued microtask to flush.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const rows = db
+      .prepare("SELECT user_id, direction, action FROM votes")
+      .all() as Array<{ user_id: string; direction: string; action: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      user_id: "U999",
+      direction: "fire",
+      action: "added",
+    });
+  });
+
+  test("duplicate event_id is acked but not re-processed", async () => {
+    recordPlayMessage(db, 9000, 5, "C1", "100.001", "99.000");
+
+    const body = JSON.stringify({
+      type: "event_callback",
+      event_id: "Ev_dupe",
+      event: {
+        type: "reaction_added",
+        user: "U999",
+        reaction: "fire",
+        item: { type: "message", channel: "C1", ts: "100.001" },
+        event_ts: "100.002",
+      },
+    });
+    const ts = String(Math.floor(Date.now() / 1000));
+    const headers = {
+      "x-slack-request-timestamp": ts,
+      "x-slack-signature": sign(ts, body),
+    };
+
+    const res1 = await postEvent(body, headers);
+    expect(res1.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const res2 = await postEvent(body, headers);
+    expect(res2.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const count = (
+      db.prepare("SELECT COUNT(*) as c FROM votes").get() as { c: number }
+    ).c;
+    expect(count).toBe(1);
+  });
+
+  test("returns 500 when signing secret is unconfigured", async () => {
+    const altDb = createDatabase(":memory:");
+    const altServer = startServer({
+      db: altDb,
+      dbPath: ":memory:",
+      logger: makeSilentLogger(),
+      port: 0,
+      getSchedulerStatus: makeSchedulerStatus,
+      // no slackSigningSecret
+    });
+    try {
+      const res = await fetch(`http://localhost:${altServer.port}/slack/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      expect(res.status).toBe(500);
+    } finally {
+      altServer.stop(true);
+      altDb.close();
+    }
   });
 });

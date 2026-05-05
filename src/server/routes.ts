@@ -25,6 +25,13 @@ import {
 } from "../storage/db";
 import type { SchedulerStatus } from "../daemon/scheduler";
 import { LANDING_PAGE_HTML } from "./landing";
+import {
+  verifySlackSignature,
+  isDuplicateEvent,
+  dispatchEvent,
+  type SlackEventEnvelope,
+} from "../notifications/slack-events";
+import type { SlackClientConfig } from "../notifications/slack-client";
 
 /** Dependencies injected into the server factory. */
 export interface ServerDeps {
@@ -33,6 +40,11 @@ export interface ServerDeps {
   logger: Logger;
   port: number;
   getSchedulerStatus: () => SchedulerStatus;
+  /** Signing secret for verifying Slack Events API requests. Optional —
+   *  when unset, the /slack/events endpoint returns 500 (fail closed). */
+  slackSigningSecret?: string;
+  /** Slack client config used by the dispatcher to call users.info. */
+  slackConfig?: SlackClientConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +223,9 @@ interface HandlerContext {
   db: Database;
   dbPath: string;
   getSchedulerStatus: () => SchedulerStatus;
+  logger: Logger;
+  slackSigningSecret?: string;
+  slackConfig?: SlackClientConfig;
 }
 
 /**
@@ -278,6 +293,68 @@ function handleHealth(ctx: HandlerContext): Response {
   return jsonResponse({ status: "ok", database, scheduler });
 }
 
+/**
+ * POST /slack/events
+ *
+ * Verifies Slack's request signature, dedupes by event_id, acks 200, and
+ * dispatches the envelope to the vote handler asynchronously so we always
+ * stay inside Slack's 3-second response window.
+ *
+ * Returns 500 when SLACK_SIGNING_SECRET is not configured (fail closed),
+ * 401 on signature verify failure, and 200 on every other path so Slack
+ * never retries a successfully-received event.
+ */
+async function handleSlackEvents(
+  ctx: HandlerContext,
+  req: Request,
+): Promise<Response> {
+  if (!ctx.slackSigningSecret) {
+    ctx.logger.error("slack events received but signing secret not configured");
+    return jsonResponse({ error: "signing secret not configured" }, 500);
+  }
+
+  const rawBody = await req.text();
+  const ts = req.headers.get("x-slack-request-timestamp");
+  const sig = req.headers.get("x-slack-signature");
+
+  if (!verifySlackSignature(ctx.slackSigningSecret, ts, sig, rawBody)) {
+    return jsonResponse({ error: "invalid signature" }, 401);
+  }
+
+  let envelope: SlackEventEnvelope;
+  try {
+    envelope = JSON.parse(rawBody) as SlackEventEnvelope;
+  } catch {
+    return jsonResponse({ error: "invalid json" }, 400);
+  }
+
+  if (envelope.type === "url_verification") {
+    return jsonResponse({ challenge: envelope.challenge });
+  }
+
+  if (envelope.event_id && isDuplicateEvent(envelope.event_id)) {
+    return new Response("", { status: 200 });
+  }
+
+  // Ack first, dispatch after — Slack's 3-second timeout starts at receipt.
+  if (ctx.slackConfig) {
+    const dispatchCtx = {
+      db: ctx.db,
+      logger: ctx.logger,
+      slackConfig: ctx.slackConfig,
+    };
+    queueMicrotask(() => {
+      dispatchEvent(envelope, dispatchCtx).catch((err) => {
+        ctx.logger.error("dispatch microtask threw", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    });
+  }
+
+  return new Response("", { status: 200 });
+}
+
 // ---------------------------------------------------------------------------
 // Server factory
 // ---------------------------------------------------------------------------
@@ -298,13 +375,28 @@ function handleHealth(ctx: HandlerContext): Response {
  * @returns The running Bun Server instance
  */
 export function startServer(deps: ServerDeps): HttpServer {
-  const { db, dbPath, logger, port, getSchedulerStatus } = deps;
+  const {
+    db,
+    dbPath,
+    logger,
+    port,
+    getSchedulerStatus,
+    slackSigningSecret,
+    slackConfig,
+  } = deps;
 
-  const ctx: HandlerContext = { db, dbPath, getSchedulerStatus };
+  const ctx: HandlerContext = {
+    db,
+    dbPath,
+    getSchedulerStatus,
+    logger,
+    slackSigningSecret,
+    slackConfig,
+  };
 
   const server = Bun.serve({
     port,
-    fetch(req: Request): Response {
+    async fetch(req: Request): Promise<Response> {
       const start = performance.now();
       const url = new URL(req.url);
       const { pathname } = url;
@@ -315,6 +407,13 @@ export function startServer(deps: ServerDeps): HttpServer {
         // CORS preflight
         if (req.method === "OPTIONS") {
           response = new Response(null, { status: 204, headers: CORS_HEADERS });
+          logRequest(logger, req.method, pathname, response.status, start);
+          return response;
+        }
+
+        // POST /slack/events (handled before the GET-only guard)
+        if (req.method === "POST" && pathname === "/slack/events") {
+          response = await handleSlackEvents(ctx, req);
           logRequest(logger, req.method, pathname, response.status, start);
           return response;
         }
