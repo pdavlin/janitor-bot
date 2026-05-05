@@ -12,6 +12,7 @@ import {
   postMessage,
   updateMessage,
   postThreadReply,
+  seedVoteReactions,
   sendGameNotifications,
   sendWebhook,
 } from "../slack-client";
@@ -301,6 +302,82 @@ describe("postThreadReply", () => {
   });
 });
 
+describe("seedVoteReactions", () => {
+  test("calls reactions.add for both fire and wastebasket in order", async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    mockFetch((input, init) => {
+      calls.push({
+        url: String(input),
+        body: JSON.parse(init!.body as string),
+      });
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+    });
+
+    await seedVoteReactions(
+      { botToken: "xoxb-x", channelId: "C1" },
+      "C1",
+      "1234.5678",
+      makeSilentLogger(),
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0].url).toBe("https://slack.com/api/reactions.add");
+    expect(calls[0].body).toEqual({
+      channel: "C1",
+      timestamp: "1234.5678",
+      name: "fire",
+    });
+    expect(calls[1].body).toEqual({
+      channel: "C1",
+      timestamp: "1234.5678",
+      name: "wastebasket",
+    });
+  });
+
+  test("logs and continues when one reaction fails", async () => {
+    let callCount = 0;
+    mockFetch(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ ok: false, error: "already_reacted" }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+    });
+
+    const logger = makeSilentLogger();
+    await seedVoteReactions(
+      { botToken: "xoxb-x", channelId: "C1" },
+      "C1",
+      "1234.5678",
+      logger,
+    );
+
+    expect(callCount).toBe(2);
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  test("skips entirely without a bot token", async () => {
+    let calls = 0;
+    mockFetch(() => {
+      calls++;
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    });
+
+    await seedVoteReactions({}, "C1", "1234.5678", makeSilentLogger());
+
+    expect(calls).toBe(0);
+  });
+});
+
 function makeMockPlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
   return {
     gamePk: 745433,
@@ -373,6 +450,8 @@ function mockFetchRecording(): {
 describe("sendGameNotifications (bot-token mode)", () => {
   test("3-play game produces 1 header post + 3 thread replies in order", async () => {
     const recorder = mockFetchRecording();
+    // Queue chat.postMessage responses; reactions.add calls fall through to
+    // the recorder's default `ok:true` response.
     recorder.setResponses([
       new Response(
         JSON.stringify({ ok: true, channel: "C1", ts: "header.ts" }),
@@ -382,14 +461,21 @@ describe("sendGameNotifications (bot-token mode)", () => {
         JSON.stringify({ ok: true, channel: "C1", ts: "play.1" }),
         { status: 200 },
       ),
+      // Two reactions.add slots for play 1 (any ok response is fine)
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(
         JSON.stringify({ ok: true, channel: "C1", ts: "play.2" }),
         { status: 200 },
       ),
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(
         JSON.stringify({ ok: true, channel: "C1", ts: "play.3" }),
         { status: 200 },
       ),
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
     ]);
 
     const plays = [
@@ -416,15 +502,36 @@ describe("sendGameNotifications (bot-token mode)", () => {
       "play.3",
     ]);
 
-    expect(recorder.calls).toHaveLength(4);
-    // The first call is the header, with no thread_ts.
-    expect(recorder.calls[0].body?.thread_ts).toBeUndefined();
-    // Subsequent calls are threaded under the header ts.
+    // 1 header + 3 plays + (2 reactions x 3 plays) = 10 calls
+    expect(recorder.calls).toHaveLength(10);
+
+    const postMessageCalls = recorder.calls.filter((c) =>
+      c.url.endsWith("/chat.postMessage"),
+    );
+    const reactionCalls = recorder.calls.filter((c) =>
+      c.url.endsWith("/reactions.add"),
+    );
+    expect(postMessageCalls).toHaveLength(4);
+    expect(reactionCalls).toHaveLength(6);
+
+    // Header has no thread_ts; the three replies do.
+    expect(postMessageCalls[0].body?.thread_ts).toBeUndefined();
     for (let i = 1; i <= 3; i++) {
-      expect(recorder.calls[i].body).toMatchObject({
+      expect(postMessageCalls[i].body).toMatchObject({
         channel: "C1",
         thread_ts: "header.ts",
       });
+    }
+
+    // Each play reply gets seeded with :fire: then :wastebasket: in order.
+    for (const playTs of ["play.1", "play.2", "play.3"]) {
+      const seeds = reactionCalls.filter(
+        (c) => (c.body as { timestamp?: string }).timestamp === playTs,
+      );
+      expect(seeds.map((c) => (c.body as { name: string }).name)).toEqual([
+        "fire",
+        "wastebasket",
+      ]);
     }
   });
 

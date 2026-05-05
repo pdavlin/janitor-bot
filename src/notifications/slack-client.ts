@@ -221,6 +221,46 @@ async function postThreadMessage(
 }
 
 /**
+ * Reactions seeded on every fresh play reply so users vote with one tap.
+ *
+ * The dispatcher already filters bot reactions out via the is_bot check in
+ * users.info, so seeding doesn't pollute the tally — these calls produce
+ * reaction_added events from the bot's own user_id that are skipped during
+ * vote counting.
+ */
+const SEED_REACTIONS: readonly string[] = ["fire", "wastebasket"];
+
+/**
+ * Seeds the bot's own :fire: and :wastebasket: reactions on a posted message
+ * so users can tap to vote without opening the emoji picker.
+ *
+ * Requires the `reactions:write` scope. Failures (missing scope, network)
+ * are logged and swallowed — a missed seed is a UX papercut, not an outage.
+ */
+export async function seedVoteReactions(
+  config: SlackClientConfig,
+  channel: string,
+  ts: string,
+  logger: Logger,
+): Promise<void> {
+  if (!config.botToken) {
+    logger.debug("seedVoteReactions skipped: no bot token");
+    return;
+  }
+  for (const reaction of SEED_REACTIONS) {
+    const result = await callSlackApi<{ ok: true }>(
+      "reactions.add",
+      { channel, timestamp: ts, name: reaction },
+      config.botToken,
+      logger,
+    );
+    if (!result) {
+      logger.warn("seed reaction failed", { reaction, channel, ts });
+    }
+  }
+}
+
+/**
  * Sends a JSON payload to a Slack webhook URL with retry logic.
  *
  * Makes up to 3 attempts with exponential backoff (1s, 2s) between
@@ -371,6 +411,13 @@ export async function sendGameNotifications(
             gamePk,
             playIndex: play.playIndex,
           });
+        } else {
+          await seedVoteReactions(
+            config,
+            replyResult.channel,
+            replyResult.ts,
+            logger,
+          );
         }
         playResults.push({ playIndex: play.playIndex, result: replyResult });
       }
