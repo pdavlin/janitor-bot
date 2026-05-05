@@ -19,7 +19,10 @@ import {
 import { createHmac } from "node:crypto";
 import { startServer } from "../routes";
 import { createDatabase, insertPlays } from "../../storage/db";
-import { recordPlayMessage } from "../../notifications/slack-messages-store";
+import {
+  recordPlayMessage,
+  recordGameHeader,
+} from "../../notifications/slack-messages-store";
 import { clearEventLru } from "../../notifications/slack-events";
 import { clearUserCache } from "../../notifications/slack-user-cache";
 import type { SchedulerStatus } from "../../daemon/scheduler";
@@ -552,6 +555,9 @@ describe("POST /slack/events", () => {
   beforeEach(() => {
     db.run("DELETE FROM votes");
     db.run("DELETE FROM slack_play_messages");
+    db.run("DELETE FROM slack_game_headers");
+    db.run("DELETE FROM play_tags");
+    db.run("DELETE FROM plays");
     clearEventLru();
     clearUserCache();
 
@@ -694,5 +700,162 @@ describe("POST /slack/events", () => {
       altServer.stop(true);
       altDb.close();
     }
+  });
+
+  describe("message events -> play_tags", () => {
+    function postSignedMessage(payload: object): Promise<Response> {
+      const body = JSON.stringify(payload);
+      const ts = String(Math.floor(Date.now() / 1000));
+      return postEvent(body, {
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": sign(ts, body),
+      });
+    }
+
+    test("known thread reply with keyword inserts a play_tags row", async () => {
+      const gamePk = 717401;
+      recordGameHeader(db, gamePk, "C1", "header.001");
+      insertPlays(db, [PLAY_BELLINGER, PLAY_WADE]);
+
+      const res = await postSignedMessage({
+        type: "event_callback",
+        event_id: "Ev_msg_1",
+        event: {
+          type: "message",
+          user: "U999",
+          text: "Cody Bellinger should be high",
+          ts: "200.001",
+          thread_ts: "header.001",
+          channel: "C1",
+        },
+      });
+      expect(res.status).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const rows = db
+        .prepare(
+          "SELECT game_pk, play_index, tag_type, tag_value FROM play_tags",
+        )
+        .all() as Array<{
+          game_pk: number;
+          play_index: number | null;
+          tag_type: string;
+          tag_value: string;
+        }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        game_pk: gamePk,
+        play_index: PLAY_BELLINGER.playIndex,
+        tag_type: "tier_dispute",
+        tag_value: "should_be_high",
+      });
+    });
+
+    test("thread reply under unknown header does not insert", async () => {
+      const res = await postSignedMessage({
+        type: "event_callback",
+        event_id: "Ev_msg_2",
+        event: {
+          type: "message",
+          user: "U999",
+          text: "wrong video",
+          ts: "200.002",
+          thread_ts: "unknown.001",
+          channel: "C1",
+        },
+      });
+      expect(res.status).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const count = (
+        db.prepare("SELECT COUNT(*) as c FROM play_tags").get() as { c: number }
+      ).c;
+      expect(count).toBe(0);
+    });
+
+    test("message_changed subtype is ignored", async () => {
+      const gamePk = 717401;
+      recordGameHeader(db, gamePk, "C1", "header.001");
+      insertPlays(db, [PLAY_BELLINGER, PLAY_WADE]);
+
+      const res = await postSignedMessage({
+        type: "event_callback",
+        event_id: "Ev_msg_3",
+        event: {
+          type: "message",
+          subtype: "message_changed",
+          user: "U999",
+          text: "Cody Bellinger should be high",
+          ts: "200.003",
+          thread_ts: "header.001",
+          channel: "C1",
+        },
+      });
+      expect(res.status).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const count = (
+        db.prepare("SELECT COUNT(*) as c FROM play_tags").get() as { c: number }
+      ).c;
+      expect(count).toBe(0);
+    });
+
+    test("single fielder name attributes to that play", async () => {
+      const gamePk = 717401;
+      recordGameHeader(db, gamePk, "C1", "header.001");
+      insertPlays(db, [PLAY_BELLINGER, PLAY_WADE]);
+
+      const res = await postSignedMessage({
+        type: "event_callback",
+        event_id: "Ev_msg_4",
+        event: {
+          type: "message",
+          user: "U999",
+          text: "Cody Bellinger, wrong video",
+          ts: "200.004",
+          thread_ts: "header.001",
+          channel: "C1",
+        },
+      });
+      expect(res.status).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const rows = db
+        .prepare("SELECT play_index, tag_value FROM play_tags")
+        .all() as Array<{ play_index: number | null; tag_value: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        play_index: PLAY_BELLINGER.playIndex,
+        tag_value: "wrong_video",
+      });
+    });
+
+    test("ambiguous fielder mention attributes at game level", async () => {
+      const gamePk = 717401;
+      recordGameHeader(db, gamePk, "C1", "header.001");
+      insertPlays(db, [PLAY_BELLINGER, PLAY_WADE]);
+
+      const res = await postSignedMessage({
+        type: "event_callback",
+        event_id: "Ev_msg_5",
+        event: {
+          type: "message",
+          user: "U999",
+          text: "Cody Bellinger and LaMonte Wade Jr. both overrated",
+          ts: "200.005",
+          thread_ts: "header.001",
+          channel: "C1",
+        },
+      });
+      expect(res.status).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const rows = db
+        .prepare("SELECT play_index, tag_value FROM play_tags")
+        .all() as Array<{ play_index: number | null; tag_value: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0].play_index).toBeNull();
+      expect(rows[0].tag_value).toBe("overrated");
+    });
   });
 });

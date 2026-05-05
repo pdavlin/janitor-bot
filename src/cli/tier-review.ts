@@ -35,6 +35,13 @@ interface FlaggedRow {
   snapshotted_at: string;
 }
 
+interface TierDisputeTagRow {
+  tag_value: string;
+  matched_text: string;
+  comment_user_id: string;
+  received_at: string;
+}
+
 const config = loadConfig();
 const db = createDatabase(config.dbPath);
 
@@ -58,6 +65,15 @@ if (rows.length === 0) {
   process.exit(0);
 }
 
+const tagStmt = db.prepare(`
+  SELECT tag_value, matched_text, comment_user_id, received_at
+  FROM play_tags
+  WHERE tag_type = 'tier_dispute'
+    AND game_pk = $gamePk
+    AND (play_index = $playIndex OR play_index IS NULL)
+  ORDER BY received_at ASC;
+`);
+
 for (const r of rows) {
   console.log(`${r.date} ${r.away_team} @ ${r.home_team}`);
   console.log(`  ${r.fielder_name} (${r.fielder_position}) -> ${r.target_base}`);
@@ -66,6 +82,19 @@ for (const r of rows) {
   );
   console.log(`  reason: ${r.tier_review_reason}`);
   console.log(`  ${r.description}`);
+
+  const tags = tagStmt.all({
+    $gamePk: r.game_pk,
+    $playIndex: r.play_index,
+  }) as TierDisputeTagRow[];
+  if (tags.length > 0) {
+    console.log(`  tier-dispute tags:`);
+    for (const t of tags) {
+      console.log(
+        `    - ${t.tag_value} ("${t.matched_text}") by ${t.comment_user_id} at ${t.received_at}`,
+      );
+    }
+  }
   console.log("");
 }
 
