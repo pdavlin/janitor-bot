@@ -10,8 +10,13 @@
     "tier-review": "bun run src/cli/tier-review.ts",
     "video-issues": "bun run src/cli/video-issues.ts",
     "verify:slack": "bun run scripts/verify-slack.ts",
+    "weekly-review": "bun run src/cli/weekly-review.ts",
+    "check:leakage": "bun run scripts/check-no-transcript-leakage.ts",
     "test": "bun test",
     "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.94.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
