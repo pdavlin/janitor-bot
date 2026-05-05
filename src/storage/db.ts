@@ -183,6 +183,20 @@ CREATE TABLE IF NOT EXISTS vote_snapshots (
 );
 `;
 
+const CREATE_PLAY_TAGS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS play_tags (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  game_pk         INTEGER NOT NULL,
+  play_index      INTEGER,
+  tag_type        TEXT    NOT NULL CHECK (tag_type IN ('tier_dispute', 'video_issue')),
+  tag_value       TEXT    NOT NULL,
+  comment_ts      TEXT    NOT NULL,
+  comment_user_id TEXT    NOT NULL,
+  matched_text    TEXT    NOT NULL,
+  received_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+`;
+
 const CREATE_AGENT_RUNS_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS agent_runs (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -294,6 +308,10 @@ export function createDatabase(dbPath: string): Database {
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_snapshots_flagged ON vote_snapshots(tier_review_flagged) WHERE tier_review_flagged = 1;",
   );
+
+  db.run(CREATE_PLAY_TAGS_TABLE_SQL);
+  db.run("CREATE INDEX IF NOT EXISTS idx_play_tags_play ON play_tags(game_pk, play_index);");
+  db.run("CREATE INDEX IF NOT EXISTS idx_play_tags_type ON play_tags(tag_type);");
 
   db.run(CREATE_AGENT_RUNS_TABLE_SQL);
   db.run(

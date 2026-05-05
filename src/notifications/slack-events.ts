@@ -22,6 +22,8 @@ import {
 } from "./slack-votes-store";
 import { getUserInfo, isVotingEligible } from "./slack-user-cache";
 import type { SlackClientConfig } from "./slack-client";
+import { attributeToPlay, parseTags } from "./comment-tags";
+import { insertPlayTag } from "./play-tags-store";
 
 /** Slack rejects timestamps drifting more than five minutes from now. */
 const FIVE_MINUTES_S = 60 * 5;
@@ -155,10 +157,14 @@ export async function dispatchEvent(
   try {
     if (envelope.type !== "event_callback" || !envelope.event) return;
     const event = envelope.event;
-    if (event.type !== "reaction_added" && event.type !== "reaction_removed") {
+    if (event.type === "reaction_added" || event.type === "reaction_removed") {
+      await handleReactionEvent(event, ctx);
       return;
     }
-    await handleReactionEvent(event, ctx);
+    if (event.type === "message") {
+      handleMessageEvent(event, ctx);
+      return;
+    }
   } catch (err) {
     ctx.logger.error("dispatch event failed", {
       error: err instanceof Error ? err.message : String(err),
@@ -201,5 +207,73 @@ async function handleReactionEvent(
       direction,
       error: err instanceof Error ? err.message : String(err),
     });
+  }
+}
+
+/**
+ * Routes a thread-reply `message` event to the keyword tag pipeline.
+ *
+ * Filters in order:
+ *   - skip edits/deletes (`message_changed`, `message_deleted`)
+ *   - require a `thread_ts` distinct from `ts` (must be a real reply)
+ *   - require user + text (bot/system messages elide these)
+ *   - require the parent ts to match a known game header
+ *
+ * After parsing tags, attribution prefers the play whose fielder is uniquely
+ * named in the comment; otherwise the tag is recorded at the game level
+ * (`play_index = NULL`).
+ */
+function handleMessageEvent(
+  event: Extract<SlackEvent, { type: "message" }>,
+  ctx: DispatchContext,
+): void {
+  if (event.subtype === "message_changed" || event.subtype === "message_deleted") return;
+  if (!event.thread_ts || event.thread_ts === event.ts) return;
+  if (!event.user || !event.text) return;
+
+  const headerRow = ctx.db
+    .prepare(
+      `SELECT game_pk FROM slack_game_headers WHERE channel = $channel AND ts = $ts LIMIT 1;`,
+    )
+    .get({ $channel: event.channel, $ts: event.thread_ts }) as
+    | { game_pk: number }
+    | null;
+  if (!headerRow) return;
+
+  const tags = parseTags(event.text);
+  if (tags.length === 0) return;
+
+  const fielders = ctx.db
+    .prepare(
+      `SELECT DISTINCT play_index, fielder_name FROM plays WHERE game_pk = $gamePk;`,
+    )
+    .all({ $gamePk: headerRow.game_pk }) as
+    { play_index: number; fielder_name: string }[];
+
+  const playIndex = attributeToPlay(
+    event.text,
+    fielders.map((f) => ({ fielderName: f.fielder_name, playIndex: f.play_index })),
+  );
+
+  for (const tag of tags) {
+    try {
+      insertPlayTag(ctx.db, {
+        gamePk: headerRow.game_pk,
+        playIndex,
+        tagType: tag.type,
+        tagValue: tag.value,
+        commentTs: event.ts,
+        commentUserId: event.user,
+        matchedText: tag.matchedText,
+      });
+    } catch (err) {
+      ctx.logger.error("play tag insert failed", {
+        gamePk: headerRow.game_pk,
+        playIndex,
+        tagType: tag.type,
+        tagValue: tag.value,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 }

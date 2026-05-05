@@ -17,27 +17,14 @@
 import type { Database } from "bun:sqlite";
 import type { Logger } from "../../logger";
 import type { Tier, FetchStatus } from "../../types/play";
+import type { PlayTagRow } from "../../notifications/play-tags-store";
+import type { TagType } from "../../notifications/comment-tags";
 import {
   callSlackApi,
   type SlackClientConfig,
 } from "../../notifications/slack-client";
 
-/**
- * Local mirror of the phase 3 play_tags row shape so phase 5 has no
- * compile-time dependency on the unshipped phase 3 store. When phase 3
- * lands, this can become an import without changing call sites.
- */
-export interface PlayTagRow {
-  id: number;
-  gamePk: number;
-  playIndex: number | null;
-  tagType: string;
-  tagValue: string;
-  commentTs: string;
-  commentUserId: string;
-  matchedText: string;
-  receivedAt: string;
-}
+export type { PlayTagRow };
 import { queryPriorFindings } from "./findings-store";
 import {
   buildTranscript,
@@ -223,7 +210,7 @@ function queryTagsInWindow(db: Database, window: WeekWindow): PlayTagRow[] {
       id: number;
       game_pk: number;
       play_index: number | null;
-      tag_type: PlayTagRow["tagType"];
+      tag_type: TagType;
       tag_value: string;
       comment_ts: string;
       comment_user_id: string;
@@ -234,7 +221,7 @@ function queryTagsInWindow(db: Database, window: WeekWindow): PlayTagRow[] {
       id: r.id,
       gamePk: r.game_pk,
       playIndex: r.play_index,
-      tagType: r.tag_type as string,
+      tagType: r.tag_type,
       tagValue: r.tag_value,
       commentTs: r.comment_ts,
       commentUserId: r.comment_user_id,
