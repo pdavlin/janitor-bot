@@ -183,6 +183,40 @@ CREATE TABLE IF NOT EXISTS vote_snapshots (
 );
 `;
 
+const CREATE_AGENT_RUNS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  week_starting       TEXT    NOT NULL,
+  model               TEXT    NOT NULL,
+  started_at          TEXT    NOT NULL,
+  completed_at        TEXT,
+  status              TEXT    NOT NULL CHECK (status IN ('started', 'success', 'error')),
+  error_text          TEXT,
+  posted_message_ts   TEXT,
+  input_tokens        INTEGER,
+  output_tokens       INTEGER,
+  estimated_cost_usd  REAL
+);
+`;
+
+const CREATE_AGENT_FINDINGS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS agent_findings (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id                INTEGER NOT NULL REFERENCES agent_runs(id),
+  finding_type          TEXT    NOT NULL,
+  description           TEXT,
+  severity              TEXT    NOT NULL CHECK (severity IN ('info', 'watch', 'act')),
+  evidence_strength     TEXT    NOT NULL CHECK (evidence_strength IN ('weak', 'moderate', 'strong')),
+  evidence_play_ids     TEXT    NOT NULL,
+  suspected_rule_area   TEXT    NOT NULL,
+  trend                 TEXT    CHECK (trend IN ('first_seen', 'recurring', 'escalating', 'cooling') OR trend IS NULL),
+  outcome               TEXT    NOT NULL DEFAULT 'pending' CHECK (outcome IN ('pending', 'confirmed', 'rejected', 'ignored')),
+  resolved_at           TEXT,
+  resolved_by_run_id    INTEGER REFERENCES agent_runs(id),
+  created_at            TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+`;
+
 const INSERT_PLAY_SQL = `
 INSERT INTO plays (
   game_pk, play_index, date, fielder_id, fielder_name, fielder_position,
@@ -259,6 +293,22 @@ export function createDatabase(dbPath: string): Database {
   db.run(CREATE_VOTE_SNAPSHOTS_TABLE_SQL);
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_snapshots_flagged ON vote_snapshots(tier_review_flagged) WHERE tier_review_flagged = 1;",
+  );
+
+  db.run(CREATE_AGENT_RUNS_TABLE_SQL);
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_agent_runs_week_starting ON agent_runs(week_starting DESC);",
+  );
+  db.run(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_started_lock ON agent_runs(week_starting) WHERE status = 'started';",
+  );
+
+  db.run(CREATE_AGENT_FINDINGS_TABLE_SQL);
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_agent_findings_run_id ON agent_findings(run_id);",
+  );
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_agent_findings_outcome ON agent_findings(outcome) WHERE outcome = 'pending';",
   );
 
   return db;

@@ -16,6 +16,17 @@ export interface Config {
   minTier: Tier | undefined;
   logLevel: LogLevel;
   port: number;
+  /**
+   * Anthropic API key for the weekly-review CLI. Read from env at load
+   * time but only required at run time on the full-run path; CLI modes
+   * that don't call the LLM (`--stats-only`, `--show-last`, `--dry-run`,
+   * `--resolve`, `--force-clear-stale-lock`) tolerate `undefined`.
+   */
+  anthropicApiKey: string | undefined;
+  /** Anthropic model identifier used by the weekly-review agent. */
+  agentModel: string;
+  /** Past-findings lookback (in weeks) used by the prompt builder. */
+  agentHistoryWeeks: number;
 }
 
 export function loadConfig(): Config {
@@ -96,6 +107,18 @@ export function loadConfig(): Config {
     );
   }
 
+  const rawAgentHistoryWeeks = process.env.AGENT_HISTORY_WEEKS;
+  let agentHistoryWeeks = 8;
+  if (rawAgentHistoryWeeks !== undefined) {
+    const parsed = Number(rawAgentHistoryWeeks);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new Error(
+        `Invalid AGENT_HISTORY_WEEKS: "${rawAgentHistoryWeeks}". Must be a positive integer.`,
+      );
+    }
+    agentHistoryWeeks = parsed;
+  }
+
   return {
     slackWebhookUrl: process.env.SLACK_WEBHOOK_URL,
     slackBotToken,
@@ -107,5 +130,8 @@ export function loadConfig(): Config {
     minTier,
     logLevel,
     port,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+    agentModel: process.env.AGENT_MODEL ?? "claude-sonnet-4-7",
+    agentHistoryWeeks,
   };
 }
