@@ -8,6 +8,7 @@
 
 import { test, expect, describe, afterEach, mock } from "bun:test";
 import {
+  callSlackApi,
   determineSlackMode,
   postMessage,
   updateMessage,
@@ -375,6 +376,87 @@ describe("seedVoteReactions", () => {
     await seedVoteReactions({}, "C1", "1234.5678", makeSilentLogger());
 
     expect(calls).toBe(0);
+  });
+});
+
+describe("callSlackApi encoding", () => {
+  test("default JSON encoding sends application/json body", async () => {
+    let captured: { contentType: string | null; body: string } | null = null;
+    mockFetch((_input, init) => {
+      captured = {
+        contentType:
+          (init?.headers as Record<string, string> | undefined)?.[
+            "Content-Type"
+          ] ?? null,
+        body: init?.body as string,
+      };
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+    });
+
+    await callSlackApi(
+      "chat.postMessage",
+      { channel: "C1", text: "hi" },
+      "xoxb-x",
+      makeSilentLogger(),
+    );
+
+    expect(captured!.contentType).toContain("application/json");
+    expect(JSON.parse(captured!.body)).toEqual({ channel: "C1", text: "hi" });
+  });
+
+  test("form encoding sends application/x-www-form-urlencoded body", async () => {
+    let captured: { contentType: string | null; body: string } | null = null;
+    mockFetch((_input, init) => {
+      captured = {
+        contentType:
+          (init?.headers as Record<string, string> | undefined)?.[
+            "Content-Type"
+          ] ?? null,
+        body: init?.body as string,
+      };
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, user: { is_bot: false } }), {
+          status: 200,
+        }),
+      );
+    });
+
+    await callSlackApi(
+      "users.info",
+      { user: "U07M860HM89" },
+      "xoxb-x",
+      makeSilentLogger(),
+      "form",
+    );
+
+    expect(captured!.contentType).toContain("application/x-www-form-urlencoded");
+    const parsed = new URLSearchParams(captured!.body);
+    expect(parsed.get("user")).toBe("U07M860HM89");
+  });
+
+  test("form encoding skips null/undefined values", async () => {
+    let captured: string = "";
+    mockFetch((_input, init) => {
+      captured = init?.body as string;
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+    });
+
+    await callSlackApi(
+      "users.info",
+      { user: "U1", include_locale: undefined, foo: null },
+      "xoxb-x",
+      makeSilentLogger(),
+      "form",
+    );
+
+    const parsed = new URLSearchParams(captured);
+    expect(parsed.get("user")).toBe("U1");
+    expect(parsed.has("include_locale")).toBe(false);
+    expect(parsed.has("foo")).toBe(false);
   });
 });
 
