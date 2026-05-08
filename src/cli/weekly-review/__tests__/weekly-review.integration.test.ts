@@ -134,6 +134,7 @@ beforeEach(() => {
     "SLACK_CHANNEL_ID",
     "LOG_LEVEL",
     "AGENT_HISTORY_WEEKS",
+    "OPERATOR_USER_ID",
   ]);
   process.env.DB_PATH = dbPath;
   process.env.ANTHROPIC_API_KEY = "sk-test";
@@ -277,5 +278,148 @@ describe("weekly-review CLI integration", () => {
       .get() as { status: string };
     expect(run.status).toBe("success");
     verifyDb.close();
+  }, 10_000);
+
+  test("with OPERATOR_USER_ID set, --dump triggers a DM to that user_id", async () => {
+    process.env.OPERATOR_USER_ID = "U07OPERATOR";
+
+    const chatPostsTo: string[] = [];
+    globalThis.fetch = mock(async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("slack.com/api/auth.test")) {
+        return jsonResponse({ ok: true, user_id: BOT_USER_ID });
+      }
+      if (url.includes("slack.com/api/conversations.replies")) {
+        return jsonResponse({ ok: true, messages: [] });
+      }
+      if (url.includes("slack.com/api/chat.postMessage")) {
+        const body = init?.body
+          ? (JSON.parse(init.body.toString()) as { channel: string })
+          : { channel: "?" };
+        chatPostsTo.push(body.channel);
+        return jsonResponse({ ok: true, channel: body.channel, ts: "1700000002.000001" });
+      }
+      if (url.includes("api.anthropic.com")) {
+        return jsonResponse({
+          id: "msg_test",
+          type: "message",
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          stop_reason: "end_turn",
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                findings: [
+                  {
+                    finding_type: "test_finding",
+                    description: "abstract pattern about RF throws across multiple plays this week.",
+                    severity: "watch",
+                    evidence_strength: "moderate",
+                    evidence_play_ids: [1, 2, 3, 4],
+                    suspected_rule_area: "ranking.ts:target_base_scores",
+                    trend: "first_seen",
+                  },
+                ],
+              }),
+            },
+          ],
+          usage: { input_tokens: 100, output_tokens: 50 },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }) as unknown as typeof fetch;
+
+    const dumpDir = join(tempDir, "dumps");
+    const exitCode = await runWeeklyReview([
+      "--week-starting",
+      "2026-04-26",
+      "--dump",
+      "--dump-dir",
+      dumpDir,
+    ]);
+    expect(exitCode).toBe(0);
+
+    expect(chatPostsTo).toContain("C123");
+    expect(chatPostsTo).toContain("U07OPERATOR");
+  }, 15_000);
+
+  test("without OPERATOR_USER_ID, no DM is sent even with --dump", async () => {
+    const chatPostsTo: string[] = [];
+    globalThis.fetch = mock(async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("slack.com/api/auth.test")) {
+        return jsonResponse({ ok: true, user_id: BOT_USER_ID });
+      }
+      if (url.includes("slack.com/api/conversations.replies")) {
+        return jsonResponse({ ok: true, messages: [] });
+      }
+      if (url.includes("slack.com/api/chat.postMessage")) {
+        const body = init?.body
+          ? (JSON.parse(init.body.toString()) as { channel: string })
+          : { channel: "?" };
+        chatPostsTo.push(body.channel);
+        return jsonResponse({ ok: true, channel: body.channel, ts: "1700000003.000001" });
+      }
+      if (url.includes("api.anthropic.com")) {
+        return jsonResponse({
+          id: "msg_test",
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ findings: [] }),
+            },
+          ],
+          usage: { input_tokens: 100, output_tokens: 50 },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }) as unknown as typeof fetch;
+
+    const dumpDir = join(tempDir, "dumps");
+    const exitCode = await runWeeklyReview([
+      "--week-starting",
+      "2026-04-26",
+      "--dump",
+      "--dump-dir",
+      dumpDir,
+    ]);
+    expect(exitCode).toBe(0);
+    // Channel post landed; nothing else.
+    expect(chatPostsTo).toEqual(["C123"]);
+  }, 15_000);
+
+  test("concurrent run blocked fires a DM and exits 2", async () => {
+    process.env.OPERATOR_USER_ID = "U07OPERATOR";
+
+    // Pre-insert a started row to force the second invocation to fail.
+    const setupDb = new Database(dbPath);
+    setupDb.run(
+      `INSERT INTO agent_runs (week_starting, model, started_at, status)
+       VALUES ('2026-04-26', 'claude-sonnet-4-6', datetime('now'), 'started');`,
+    );
+    setupDb.close();
+
+    const chatPostsTo: string[] = [];
+    globalThis.fetch = mock(async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("slack.com/api/chat.postMessage")) {
+        const body = init?.body
+          ? (JSON.parse(init.body.toString()) as { channel: string })
+          : { channel: "?" };
+        chatPostsTo.push(body.channel);
+        return jsonResponse({ ok: true, channel: body.channel, ts: "1700000004.000001" });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }) as unknown as typeof fetch;
+
+    const exitCode = await runWeeklyReview([
+      "--week-starting",
+      "2026-04-26",
+    ]);
+    expect(exitCode).toBe(2);
+    expect(chatPostsTo).toContain("U07OPERATOR");
   }, 10_000);
 });

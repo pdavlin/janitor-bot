@@ -32,6 +32,7 @@ import {
   writeDump,
   resolveGitSha,
 } from "./weekly-review/dump";
+import { notifyOperator } from "./weekly-review/notify-operator";
 import type { Transcript } from "./weekly-review/types";
 import {
   persistFindings,
@@ -179,6 +180,40 @@ function resolveWindow(flags: ParsedFlags): WeekWindow {
     : defaultCompletedWeek();
 }
 
+/**
+ * Best-effort lookup of the blocking `started` row for the
+ * concurrent_run_blocked DM. Returns null on any failure (DB locked,
+ * row missing) — the DM still fires, just without the run id.
+ */
+function lookupBlockingRunId(db: Database, weekStarting: string): number | null {
+  try {
+    const row = db
+      .prepare(
+        `SELECT id FROM agent_runs WHERE week_starting = $week AND status = 'started' LIMIT 1;`,
+      )
+      .get({ $week: weekStarting }) as { id: number } | null;
+    return row?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Maps the validator's verbose reason strings to short DM keys. */
+function simplifyReason(reason: string): string {
+  if (reason.includes("quote")) return "quote";
+  if (reason.includes("mention")) return "mention";
+  if (reason.includes("substring")) return "substring";
+  if (
+    reason.includes("missing") ||
+    reason.includes("invalid") ||
+    reason.includes("non-integer") ||
+    reason.includes("not an object")
+  ) {
+    return "shape";
+  }
+  return "other";
+}
+
 interface WriteRunDumpInput {
   flags: ParsedFlags;
   mode: "full" | "dryRun";
@@ -197,9 +232,11 @@ const DEFAULT_DUMP_DIR = "./weekly-review-dumps";
 /**
  * Persists a JSON dump of the run for offline prompt iteration.
  * Failures are logged at warn level and never break the run — the
- * dump is an aside, not a critical path.
+ * dump is an aside, not a critical path. Returns the absolute path
+ * on success, or null when the write failed (so trigger sites that
+ * want to reference the dump file can short-circuit cleanly).
  */
-async function writeRunDump(input: WriteRunDumpInput): Promise<void> {
+async function writeRunDump(input: WriteRunDumpInput): Promise<string | null> {
   const dumpDir = input.flags.dumpDir ?? DEFAULT_DUMP_DIR;
   const dump = buildDump({
     mode: input.mode,
@@ -220,10 +257,12 @@ async function writeRunDump(input: WriteRunDumpInput): Promise<void> {
   try {
     const path = await writeDump(dump, dumpDir);
     input.logger.info("dump written", { path });
+    return path;
   } catch (err) {
     input.logger.warn("dump write failed", {
       error: err instanceof Error ? err.message : String(err),
     });
+    return null;
   }
 }
 
@@ -253,6 +292,13 @@ async function runFull(
   } catch (err) {
     if (err instanceof ConcurrentRunError) {
       logger.error(err.message);
+      await notifyOperator(slackConfig, config.operatorUserId, {
+        kind: "concurrent_run_blocked",
+        ctx: {
+          weekStarting: window.weekStarting,
+          blockingRunId: lookupBlockingRunId(db, window.weekStarting),
+        },
+      }, logger);
       return 2;
     }
     throw err;
@@ -316,8 +362,9 @@ async function runFull(
 
     persistFindings(db, lock.runId, ordered);
 
+    let dumpPath: string | null = null;
     if (flags.dump) {
-      await writeRunDump({
+      dumpPath = await writeRunDump({
         flags,
         mode: "full",
         model: config.agentModel,
@@ -360,13 +407,49 @@ async function runFull(
       ts.ts,
     );
 
+    if (dumpPath !== null) {
+      await notifyOperator(slackConfig, config.operatorUserId, {
+        kind: "dump_captured",
+        ctx: {
+          weekStarting: window.weekStarting,
+          weekEnding: window.weekEnding,
+          runId: lock.runId,
+          model: config.agentModel,
+          dumpPath,
+          acceptedCount: validated.accepted.length,
+          rejectedCount: validated.rejected.length,
+          estimatedCostUsd: agentResult.estimatedCostUsd,
+        },
+      }, logger);
+    }
+
+    if (ordered.length === 0 && validated.rejected.length > 0) {
+      const rejectionsByReason: Record<string, number> = {};
+      for (const r of validated.rejected) {
+        const key = simplifyReason(r.reason);
+        rejectionsByReason[key] = (rejectionsByReason[key] ?? 0) + 1;
+      }
+      await notifyOperator(slackConfig, config.operatorUserId, {
+        kind: "all_findings_rejected",
+        ctx: {
+          runId: lock.runId,
+          weekStarting: window.weekStarting,
+          rejectionsByReason,
+          totalRejected: validated.rejected.length,
+        },
+      }, logger);
+    }
+
     try {
       runRetentionSweep(db);
       autoCloseStaleFindings(db);
     } catch (err) {
-      logger.warn("retention sweep failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      const errMessage = err instanceof Error ? err.message : String(err);
+      logger.warn("retention sweep failed", { error: errMessage });
+      await notifyOperator(slackConfig, config.operatorUserId, {
+        kind: "retention_sweep_failed",
+        ctx: { runId: lock.runId, errorMessage: errMessage },
+      }, logger);
     }
 
     releaseStatus = "success";
@@ -400,6 +483,13 @@ async function runStatsOnly(
   } catch (err) {
     if (err instanceof ConcurrentRunError) {
       logger.error(err.message);
+      await notifyOperator(slackConfig, config.operatorUserId, {
+        kind: "concurrent_run_blocked",
+        ctx: {
+          weekStarting: window.weekStarting,
+          blockingRunId: lookupBlockingRunId(db, window.weekStarting),
+        },
+      }, logger);
       return 2;
     }
     throw err;
