@@ -76,6 +76,25 @@ const STRENGTH_RUBRIC = `Evidence strength:
 - moderate: 4-6 plays
 - strong: 7+ plays`;
 
+const TOOL_USE_GUIDE = `Tool use
+========
+
+You have access to read-only DB query tools. Use them to verify hypotheses
+before emitting findings.
+
+Available tools (see registry for full schemas):
+- getVoteSnapshot(playId) — actual fire/trash/voter counts for a play
+- getPlayDetails(playId) — tier/position/runners_on/credit_chain etc
+- getThreadMessageCount(gamePk) — count of recorded thread messages
+- getHistoricalFindingOutcomes(suspectedRuleArea, weeks) — confirmed/rejected counts
+- getPriorFindingDescription(findingId) — full description of a past finding
+- queryPlaysInWindow(filters) — filtered query for plays in this week
+- getPlayTagsForPlay(playId) — phase 3 regex tags
+
+Guidance: before claiming a vote count, engagement level, or pattern
+recurrence, call the relevant tool. Findings whose claims are not
+backed by tool calls may be dropped at validation in future runs.`;
+
 function buildSystemPrompt(ruleAreas: readonly string[]): string {
   const allowList = ruleAreas.map((r) => `  - ${r}`).join("\n");
   return [
@@ -99,6 +118,8 @@ function buildSystemPrompt(ruleAreas: readonly string[]): string {
     allowList,
     "Use \"unknown\" if you cannot confidently map the pattern.",
     "Use \"new_tunable_needed\" if the pattern points at a factor the bot doesn't currently weight.",
+    "",
+    TOOL_USE_GUIDE,
   ].join("\n");
 }
 

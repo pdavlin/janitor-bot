@@ -391,6 +391,103 @@ describe("weekly-review CLI integration", () => {
     expect(chatPostsTo).toEqual(["C123"]);
   }, 15_000);
 
+  test("full run dispatches a getVoteSnapshot tool call and persists tool telemetry", async () => {
+    let anthropicCallCount = 0;
+    globalThis.fetch = mock(async (input: URL | RequestInfo) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("slack.com/api/auth.test")) {
+        return jsonResponse({ ok: true, user_id: BOT_USER_ID });
+      }
+      if (url.includes("slack.com/api/conversations.replies")) {
+        return jsonResponse({ ok: true, messages: [] });
+      }
+      if (url.includes("slack.com/api/chat.postMessage")) {
+        return jsonResponse({
+          ok: true,
+          channel: "C123",
+          ts: "1700000005.000001",
+        });
+      }
+      if (url.includes("api.anthropic.com")) {
+        anthropicCallCount++;
+        if (anthropicCallCount === 1) {
+          // First turn: ask for getVoteSnapshot on play 1.
+          return jsonResponse({
+            id: "msg_test",
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-4-6",
+            stop_reason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu_1",
+                name: "getVoteSnapshot",
+                input: { playId: 1 },
+              },
+            ],
+            usage: { input_tokens: 800, output_tokens: 50 },
+          });
+        }
+        // Second turn: final findings.
+        return jsonResponse({
+          id: "msg_test_2",
+          type: "message",
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          stop_reason: "end_turn",
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                findings: [
+                  {
+                    finding_type: "rf_home_pushback_with_tool",
+                    description:
+                      "Pattern verified via vote_snapshots tool: net negative across multiple plays.",
+                    severity: "watch",
+                    evidence_strength: "moderate",
+                    evidence_play_ids: [1, 2, 3, 4],
+                    suspected_rule_area: "ranking.ts:target_base_scores",
+                    trend: "first_seen",
+                  },
+                ],
+              }),
+            },
+          ],
+          usage: { input_tokens: 900, output_tokens: 200 },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }) as unknown as typeof fetch;
+
+    const exitCode = await runWeeklyReview([
+      "--week-starting",
+      "2026-04-26",
+    ]);
+    expect(exitCode).toBe(0);
+    expect(anthropicCallCount).toBe(2);
+
+    const verifyDb = new Database(dbPath);
+    const run = verifyDb
+      .prepare(
+        `SELECT id, status, tool_call_count, tool_call_breakdown
+         FROM agent_runs ORDER BY id DESC LIMIT 1;`,
+      )
+      .get() as {
+      id: number;
+      status: string;
+      tool_call_count: number | null;
+      tool_call_breakdown: string | null;
+    };
+    expect(run.status).toBe("success");
+    expect(run.tool_call_count).toBe(1);
+    expect(JSON.parse(run.tool_call_breakdown!)).toEqual({
+      getVoteSnapshot: 1,
+    });
+    verifyDb.close();
+  }, 15_000);
+
   test("concurrent run blocked fires a DM and exits 2", async () => {
     process.env.OPERATOR_USER_ID = "U07OPERATOR";
 

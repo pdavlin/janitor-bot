@@ -29,6 +29,10 @@ export interface AgentDumpResponse {
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd: number;
+  /** Total tool calls dispatched across the run; 0 on tool-disabled paths. */
+  toolCallCount: number;
+  /** Per-tool dispatch counts. Empty object when no tools were dispatched. */
+  toolCallBreakdown: Record<string, number>;
 }
 
 /**

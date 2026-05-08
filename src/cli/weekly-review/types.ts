@@ -104,6 +104,8 @@ export interface AgentRunRow {
   input_tokens: number | null;
   output_tokens: number | null;
   estimated_cost_usd: number | null;
+  tool_call_count: number | null;
+  tool_call_breakdown: string | null;
 }
 
 /** Aggregate hit-rate computed by `findings-store.getHitRate`. */

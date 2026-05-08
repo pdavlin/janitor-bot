@@ -321,6 +321,13 @@ export function createDatabase(dbPath: string): Database {
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_started_lock ON agent_runs(week_starting) WHERE status = 'started';",
   );
 
+  try {
+    db.run("ALTER TABLE agent_runs ADD COLUMN tool_call_count INTEGER;");
+  } catch (_) { /* column already exists */ }
+  try {
+    db.run("ALTER TABLE agent_runs ADD COLUMN tool_call_breakdown TEXT;");
+  } catch (_) { /* column already exists */ }
+
   db.run(CREATE_AGENT_FINDINGS_TABLE_SQL);
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_agent_findings_run_id ON agent_findings(run_id);",

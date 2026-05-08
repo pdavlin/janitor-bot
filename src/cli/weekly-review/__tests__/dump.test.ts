@@ -60,6 +60,8 @@ describe("buildDump", () => {
         inputTokens: 1500,
         outputTokens: 200,
         estimatedCostUsd: 0.0123,
+        toolCallCount: 2,
+        toolCallBreakdown: { getVoteSnapshot: 2 },
       },
       validated: SAMPLE_VALIDATED,
       gitSha: "abcdef0",
@@ -73,6 +75,8 @@ describe("buildDump", () => {
     expect(dump.transcript.games[0]!.messages[0]!.text).toBe("the play was great");
     expect(dump.validated.accepted).toHaveLength(1);
     expect(dump.gitSha).toBe("abcdef0");
+    expect(dump.response.toolCallCount).toBe(2);
+    expect(dump.response.toolCallBreakdown).toEqual({ getVoteSnapshot: 2 });
   });
 });
 
@@ -91,6 +95,8 @@ describe("writeDump / readDump", () => {
         inputTokens: 100,
         outputTokens: 50,
         estimatedCostUsd: 0.001,
+        toolCallCount: 0,
+        toolCallBreakdown: {},
       },
       validated: { accepted: [], rejected: [] },
       gitSha: null,
@@ -118,6 +124,8 @@ describe("writeDump / readDump", () => {
         inputTokens: 0,
         outputTokens: 0,
         estimatedCostUsd: 0,
+        toolCallCount: 0,
+        toolCallBreakdown: {},
       },
       validated: { accepted: [], rejected: [] },
       gitSha: null,
