@@ -1,0 +1,15 @@
+[Unit]
+Description=Weekly LLM-driven classification review schedule
+Documentation=https://github.com/pdavlin/janitor-bot
+
+[Timer]
+# Monday 9am America/Chicago. Avoids the spec's Sunday-equals-prior-week
+# rule (defaultCompletedWeek treats Sunday as the start of the next
+# window); Monday cleanly resolves to the just-ended Sun-Sat week.
+OnCalendar=Mon 09:00 America/Chicago
+# Run on next boot if the VM was down when the timer should have fired.
+Persistent=true
+Unit=janitor-bot-weekly-review.service
+
+[Install]
+WantedBy=timers.target
