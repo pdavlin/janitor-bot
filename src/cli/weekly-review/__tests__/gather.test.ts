@@ -134,7 +134,7 @@ describe("gather", () => {
     recordGameHeader(db, 100, "C123", "1700000001.000001");
     db.run(
       `INSERT INTO agent_runs (week_starting, model, started_at, status, posted_message_ts)
-       VALUES ('2026-04-19', 'claude-sonnet-4-7', datetime('now'), 'success', '${PRIOR_DIGEST_TS}');`,
+       VALUES ('2026-04-19', 'claude-sonnet-4-6', datetime('now'), 'success', '${PRIOR_DIGEST_TS}');`,
     );
 
     globalThis.fetch = mock(async (input: URL | RequestInfo) => {

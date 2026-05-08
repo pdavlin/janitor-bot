@@ -33,7 +33,7 @@ const sampleFinding = (overrides: Partial<Finding> = {}): Finding => ({
 
 describe("persistFindings", () => {
   test("inserts findings linked to the run", () => {
-    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-7");
+    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-6");
     persistFindings(db, lock.runId, [sampleFinding(), sampleFinding({ finding_type: "other" })]);
 
     const rows = db
@@ -45,7 +45,7 @@ describe("persistFindings", () => {
   });
 
   test("is a no-op for an empty findings array", () => {
-    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-7");
+    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-6");
     persistFindings(db, lock.runId, []);
     const count = db
       .prepare(`SELECT COUNT(*) AS c FROM agent_findings WHERE run_id = $id;`)
@@ -56,7 +56,7 @@ describe("persistFindings", () => {
 
 describe("recordAgentTelemetry", () => {
   test("stamps cost + posted ts onto the run row", () => {
-    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-7");
+    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-6");
     recordAgentTelemetry(db, lock.runId, 1234, 567, 0.0123, "1700000000.000100");
 
     const row = db
@@ -76,7 +76,7 @@ describe("recordAgentTelemetry", () => {
 
 describe("runRetentionSweep", () => {
   test("nulls agent_findings.description for old rows and tolerates missing play_tags", () => {
-    const lock = acquireLock(db, "2025-01-05", "claude-sonnet-4-7");
+    const lock = acquireLock(db, "2025-01-05", "claude-sonnet-4-6");
     persistFindings(db, lock.runId, [sampleFinding()]);
     db.run(`UPDATE agent_findings SET created_at = datetime('now', '-105 days');`);
 
@@ -89,7 +89,7 @@ describe("runRetentionSweep", () => {
   });
 
   test("is idempotent", () => {
-    const lock = acquireLock(db, "2025-01-05", "claude-sonnet-4-7");
+    const lock = acquireLock(db, "2025-01-05", "claude-sonnet-4-6");
     persistFindings(db, lock.runId, [sampleFinding()]);
     db.run(`UPDATE agent_findings SET created_at = datetime('now', '-105 days');`);
 
@@ -105,7 +105,7 @@ describe("runRetentionSweep", () => {
 
 describe("autoCloseStaleFindings", () => {
   test("flips pending rows older than 14 days to ignored", () => {
-    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-7");
+    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-6");
     persistFindings(db, lock.runId, [sampleFinding()]);
     db.run(`UPDATE agent_findings SET created_at = datetime('now', '-30 days');`);
 
@@ -120,7 +120,7 @@ describe("autoCloseStaleFindings", () => {
   });
 
   test("leaves recent pending rows alone", () => {
-    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-7");
+    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-6");
     persistFindings(db, lock.runId, [sampleFinding()]);
 
     autoCloseStaleFindings(db);
@@ -138,7 +138,7 @@ describe("getHitRate / resolveFinding", () => {
   });
 
   test("counts confirmed and rejected against the denominator", () => {
-    const lockA = acquireLock(db, "2026-04-19", "claude-sonnet-4-7");
+    const lockA = acquireLock(db, "2026-04-19", "claude-sonnet-4-6");
     persistFindings(db, lockA.runId, [
       sampleFinding({ finding_type: "a1" }),
       sampleFinding({ finding_type: "a2" }),
@@ -159,15 +159,15 @@ describe("getHitRate / resolveFinding", () => {
 
 describe("queryPriorFindings", () => {
   test("returns successful prior runs but excludes the target week and earlier-than-window rows", () => {
-    const old = acquireLock(db, "2025-12-28", "claude-sonnet-4-7");
+    const old = acquireLock(db, "2025-12-28", "claude-sonnet-4-6");
     persistFindings(db, old.runId, [sampleFinding({ finding_type: "old_one" })]);
     old.release("success");
 
-    const lockA = acquireLock(db, "2026-04-19", "claude-sonnet-4-7");
+    const lockA = acquireLock(db, "2026-04-19", "claude-sonnet-4-6");
     persistFindings(db, lockA.runId, [sampleFinding({ finding_type: "prior_one" })]);
     lockA.release("success");
 
-    const target = acquireLock(db, "2026-04-26", "claude-sonnet-4-7");
+    const target = acquireLock(db, "2026-04-26", "claude-sonnet-4-6");
     persistFindings(db, target.runId, [sampleFinding({ finding_type: "current_one" })]);
 
     const prior = queryPriorFindings(db, "2026-04-26", 8);
@@ -177,7 +177,7 @@ describe("queryPriorFindings", () => {
 
 describe("queryLastRunFindings", () => {
   test("returns the latest successful run's findings", () => {
-    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-7");
+    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-6");
     persistFindings(db, lock.runId, [sampleFinding(), sampleFinding({ finding_type: "two" })]);
     lock.release("success");
 
