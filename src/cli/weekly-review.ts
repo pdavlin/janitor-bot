@@ -25,6 +25,7 @@ import { computeBaseline } from "./weekly-review/baseline";
 import { gather, totalVotes } from "./weekly-review/gather";
 import { buildPrompt, type BuiltPrompt } from "./weekly-review/prompt";
 import { callAgent, type AgentResult } from "./weekly-review/agent";
+import { WEEKLY_REVIEW_TOOLS } from "./weekly-review/tools";
 import { validateFindings, type ValidationResult } from "./weekly-review/validation";
 import { RULE_AREAS } from "./weekly-review/rule-areas";
 import {
@@ -250,6 +251,8 @@ async function writeRunDump(input: WriteRunDumpInput): Promise<string | null> {
       inputTokens: input.agentResult.inputTokens,
       outputTokens: input.agentResult.outputTokens,
       estimatedCostUsd: input.agentResult.estimatedCostUsd,
+      toolCallCount: input.agentResult.toolCallCount,
+      toolCallBreakdown: input.agentResult.toolCallBreakdown,
     },
     validated: input.validated,
     gitSha: resolveGitSha(),
@@ -326,7 +329,7 @@ async function runFull(
       });
       const message = buildInsufficientDigest(window, playCount, voteCount);
       const ts = await postDigest(slackConfig, config.slackChannelId, message, logger);
-      recordAgentTelemetry(db, lock.runId, 0, 0, 0, ts?.ts ?? null);
+      recordAgentTelemetry(db, lock.runId, 0, 0, 0, ts?.ts ?? null, 0, {});
       releaseStatus = ts ? "success" : "error";
       if (!ts) releaseError = "slack post failed";
       return ts ? 0 : 1;
@@ -349,6 +352,11 @@ async function runFull(
       config.agentModel,
       prompt,
       logger,
+      undefined,
+      {
+        tools: WEEKLY_REVIEW_TOOLS,
+        toolContext: { db, logger },
+      },
     );
 
     const validated = validateFindings(
@@ -405,7 +413,14 @@ async function runFull(
       agentResult.outputTokens,
       agentResult.estimatedCostUsd,
       ts.ts,
+      agentResult.toolCallCount,
+      agentResult.toolCallBreakdown,
     );
+
+    logger.info("agent run tool telemetry", {
+      toolCallCount: agentResult.toolCallCount,
+      toolCallBreakdown: agentResult.toolCallBreakdown,
+    });
 
     if (dumpPath !== null) {
       await notifyOperator(slackConfig, config.operatorUserId, {
@@ -505,7 +520,7 @@ async function runStatsOnly(
       releaseError = "slack post failed";
       return 1;
     }
-    recordAgentTelemetry(db, lock.runId, 0, 0, 0, ts.ts);
+    recordAgentTelemetry(db, lock.runId, 0, 0, 0, ts.ts, 0, {});
     releaseStatus = "success";
     return 0;
   } catch (err) {
@@ -567,6 +582,11 @@ async function runDryRun(
     config.agentModel,
     prompt,
     logger,
+    undefined,
+    {
+      tools: WEEKLY_REVIEW_TOOLS,
+      toolContext: { db, logger },
+    },
   );
   const validated = validateFindings(result.rawFindings, gathered.transcript, logger);
   process.stdout.write(
@@ -577,6 +597,8 @@ async function runDryRun(
         inputTokens: result.inputTokens,
         outputTokens: result.outputTokens,
         estimatedCostUsd: result.estimatedCostUsd,
+        toolCallCount: result.toolCallCount,
+        toolCallBreakdown: result.toolCallBreakdown,
       },
       null,
       2,
@@ -602,6 +624,19 @@ async function runDryRun(
   return 0;
 }
 
+function formatToolBreakdown(breakdownJson: string | null): string {
+  if (!breakdownJson) return "";
+  let parsed: Record<string, number>;
+  try {
+    parsed = JSON.parse(breakdownJson) as Record<string, number>;
+  } catch {
+    return "";
+  }
+  const entries = Object.entries(parsed);
+  if (entries.length === 0) return "";
+  return entries.map(([name, count]) => `${name}: ${count}`).join(", ");
+}
+
 function runShowLast(db: Database): number {
   const { run, findings } = queryLastRunFindings(db);
   if (!run) {
@@ -611,6 +646,11 @@ function runShowLast(db: Database): number {
   process.stdout.write(
     `Run #${run.id} (week of ${run.week_starting}) — ${findings.length} findings:\n`,
   );
+  if (run.tool_call_count !== null) {
+    const breakdown = formatToolBreakdown(run.tool_call_breakdown);
+    const suffix = breakdown.length > 0 ? ` (${breakdown})` : "";
+    process.stdout.write(`Tool calls: ${run.tool_call_count}${suffix}\n`);
+  }
   for (const f of findings) {
     const playIds = JSON.parse(f.evidence_play_ids) as number[];
     process.stdout.write(

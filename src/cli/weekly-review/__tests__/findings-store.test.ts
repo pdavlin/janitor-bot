@@ -55,22 +55,52 @@ describe("persistFindings", () => {
 });
 
 describe("recordAgentTelemetry", () => {
-  test("stamps cost + posted ts onto the run row", () => {
+  test("stamps cost + posted ts + tool telemetry onto the run row", () => {
     const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-6");
-    recordAgentTelemetry(db, lock.runId, 1234, 567, 0.0123, "1700000000.000100");
+    recordAgentTelemetry(
+      db,
+      lock.runId,
+      1234,
+      567,
+      0.0123,
+      "1700000000.000100",
+      4,
+      { getVoteSnapshot: 3, getPlayDetails: 1 },
+    );
 
     const row = db
-      .prepare(`SELECT input_tokens, output_tokens, estimated_cost_usd, posted_message_ts FROM agent_runs WHERE id = $id;`)
+      .prepare(
+        `SELECT input_tokens, output_tokens, estimated_cost_usd, posted_message_ts,
+                tool_call_count, tool_call_breakdown
+         FROM agent_runs WHERE id = $id;`,
+      )
       .get({ $id: lock.runId }) as {
       input_tokens: number;
       output_tokens: number;
       estimated_cost_usd: number;
       posted_message_ts: string;
+      tool_call_count: number;
+      tool_call_breakdown: string;
     };
     expect(row.input_tokens).toBe(1234);
     expect(row.output_tokens).toBe(567);
     expect(row.estimated_cost_usd).toBeCloseTo(0.0123, 4);
     expect(row.posted_message_ts).toBe("1700000000.000100");
+    expect(row.tool_call_count).toBe(4);
+    expect(JSON.parse(row.tool_call_breakdown)).toEqual({
+      getVoteSnapshot: 3,
+      getPlayDetails: 1,
+    });
+  });
+
+  test("serializes an empty breakdown as {}", () => {
+    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-6");
+    recordAgentTelemetry(db, lock.runId, 0, 0, 0, null, 0, {});
+    const row = db
+      .prepare(`SELECT tool_call_count, tool_call_breakdown FROM agent_runs WHERE id = $id;`)
+      .get({ $id: lock.runId }) as { tool_call_count: number; tool_call_breakdown: string };
+    expect(row.tool_call_count).toBe(0);
+    expect(row.tool_call_breakdown).toBe("{}");
   });
 });
 

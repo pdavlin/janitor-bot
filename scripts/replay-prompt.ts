@@ -21,10 +21,12 @@
 
 import { createLogger } from "../src/logger";
 import { callAgent } from "../src/cli/weekly-review/agent";
+import { WEEKLY_REVIEW_TOOLS } from "../src/cli/weekly-review/tools";
 import { validateFindings } from "../src/cli/weekly-review/validation";
 import { buildTranscript } from "../src/cli/weekly-review/types";
 import { readDump, type DumpRecord } from "../src/cli/weekly-review/dump";
 import type { Finding } from "../src/cli/weekly-review/types";
+import { createDatabase } from "../src/storage/db";
 
 interface CliArgs {
   dumpPath: string;
@@ -158,7 +160,16 @@ async function main(): Promise<void> {
       `user_override=${userOverride ? "yes" : "no"}\n\n`,
   );
 
-  const result = await callAgent(apiKey, model, replayPrompt, logger);
+  // Tool calls during replay run against the operator's local DB (DB_PATH
+  // env) when set; otherwise an in-memory DB so tools return not_found
+  // cleanly. The replay script never writes to the DB.
+  const dbPath = process.env.DB_PATH ?? ":memory:";
+  const db = createDatabase(dbPath);
+
+  const result = await callAgent(apiKey, model, replayPrompt, logger, undefined, {
+    tools: WEEKLY_REVIEW_TOOLS,
+    toolContext: { db, logger },
+  });
   const validated = validateFindings(result.rawFindings, transcript, logger);
 
   const original = summarize(dump.validated.accepted);
@@ -192,6 +203,17 @@ async function main(): Promise<void> {
       `replay=$${result.estimatedCostUsd.toFixed(4)} ` +
       `(input ${result.inputTokens}, output ${result.outputTokens})\n`,
   );
+
+  if (result.toolCallCount > 0) {
+    const breakdown = Object.entries(result.toolCallBreakdown)
+      .map(([name, count]) => `${name}: ${count}`)
+      .join(", ");
+    process.stdout.write(`tool calls: ${result.toolCallCount} (${breakdown})\n`);
+  } else {
+    process.stdout.write("tool calls: 0\n");
+  }
+
+  db.close();
 }
 
 if (import.meta.main) {

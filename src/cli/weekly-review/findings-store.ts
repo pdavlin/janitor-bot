@@ -48,6 +48,10 @@ export function persistFindings(
 /**
  * Stamps cost telemetry and the posted Slack `ts` onto an existing
  * `agent_runs` row. Status transitions stay with `lock.release`.
+ *
+ * Tool-call telemetry is included so the operator can see week-over-week
+ * whether the agent reaches for the read-only tool surface. An empty
+ * breakdown serializes to `{}`; pre-tool-use rows have NULL.
  */
 export function recordAgentTelemetry(
   db: Database,
@@ -56,6 +60,8 @@ export function recordAgentTelemetry(
   outputTokens: number,
   estimatedCostUsd: number,
   postedMessageTs: string | null,
+  toolCallCount: number,
+  toolCallBreakdown: Record<string, number>,
 ): void {
   db.prepare(
     `
@@ -63,7 +69,9 @@ export function recordAgentTelemetry(
     SET input_tokens = $in,
         output_tokens = $out,
         estimated_cost_usd = $cost,
-        posted_message_ts = $ts
+        posted_message_ts = $ts,
+        tool_call_count = $tcc,
+        tool_call_breakdown = $tcb
     WHERE id = $runId;
   `,
   ).run({
@@ -71,6 +79,8 @@ export function recordAgentTelemetry(
     $out: outputTokens,
     $cost: estimatedCostUsd,
     $ts: postedMessageTs,
+    $tcc: toolCallCount,
+    $tcb: JSON.stringify(toolCallBreakdown),
     $runId: runId,
   });
 }
@@ -209,15 +219,23 @@ export function queryPriorFindings(
   return rows;
 }
 
+export interface LastRunSummary {
+  id: number;
+  week_starting: string;
+  tool_call_count: number | null;
+  tool_call_breakdown: string | null;
+}
+
 /** Returns the most recent successful run's findings, in stored order. */
 export function queryLastRunFindings(
   db: Database,
-): { run: { id: number; week_starting: string } | null; findings: FindingRow[] } {
+): { run: LastRunSummary | null; findings: FindingRow[] } {
   const run = db
     .prepare(
-      `SELECT id, week_starting FROM agent_runs WHERE status = 'success' ORDER BY id DESC LIMIT 1;`,
+      `SELECT id, week_starting, tool_call_count, tool_call_breakdown
+       FROM agent_runs WHERE status = 'success' ORDER BY id DESC LIMIT 1;`,
     )
-    .get() as { id: number; week_starting: string } | null;
+    .get() as LastRunSummary | null;
   if (!run) return { run: null, findings: [] };
 
   const findings = db
