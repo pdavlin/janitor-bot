@@ -1,0 +1,27 @@
+[Unit]
+Description=Weekly LLM-driven classification review for janitor-bot
+Documentation=https://github.com/pdavlin/janitor-bot
+# Wait for network because the CLI hits the MLB schedule, Slack, and
+# Anthropic APIs. Network-online.target is satisfied once outbound
+# traffic is routable.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=exedev
+WorkingDirectory=/home/exedev/janitor-bot
+# .env carries SLACK_BOT_TOKEN, SLACK_CHANNEL_ID, ANTHROPIC_API_KEY,
+# OPERATOR_USER_ID, DB_PATH, etc. Format is plain KEY=VALUE which
+# systemd's EnvironmentFile parses directly.
+EnvironmentFile=/home/exedev/janitor-bot/.env
+# `bun run` resolves the script via package.json["scripts"]; using the
+# direct script path here avoids depending on cwd-relative npm-style
+# resolution inside a oneshot unit.
+ExecStart=/home/exedev/.bun/bin/bun run /home/exedev/janitor-bot/src/cli/weekly-review.ts --dump
+# Timeout headroom: agent.ts caps per-attempt LLM at 50s + 5s backoff
+# + 50s retry = ~105s. Plus gather (Slack calls per game) and Slack
+# digest post. 10 minutes is generous but bounded.
+TimeoutStartSec=10min
+StandardOutput=journal
+StandardError=journal
