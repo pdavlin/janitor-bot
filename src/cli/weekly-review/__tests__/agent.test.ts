@@ -1,6 +1,11 @@
 import { test, expect, describe, beforeEach } from "bun:test";
 import { createLogger } from "../../../logger";
-import { callAgent, estimateCost, type AgentClient } from "../agent";
+import {
+  callAgent,
+  estimateCost,
+  extractJsonPayload,
+  type AgentClient,
+} from "../agent";
 import type { BuiltPrompt } from "../prompt";
 
 const silentLogger = createLogger("error");
@@ -109,6 +114,58 @@ describe("callAgent", () => {
     ).rejects.toThrow(/non-JSON/);
   });
 
+  test("parses JSON wrapped in a ```json markdown fence", async () => {
+    const fenced =
+      '```json\n' +
+      JSON.stringify({
+        findings: [
+          { finding_type: "fenced_one", description: "x", severity: "info" },
+        ],
+      }) +
+      '\n```';
+    const client = makeClient({ responses: [{ kind: "ok", text: fenced }] });
+    const result = await callAgent(
+      "k",
+      "claude-sonnet-4-6",
+      PROMPT,
+      silentLogger,
+      client,
+    );
+    expect(result.rawFindings).toHaveLength(1);
+  });
+
+  test("parses JSON wrapped in a bare ``` fence", async () => {
+    const fenced =
+      '```\n' +
+      JSON.stringify({ findings: [{ finding_type: "bare_fence" }] }) +
+      '\n```';
+    const client = makeClient({ responses: [{ kind: "ok", text: fenced }] });
+    const result = await callAgent(
+      "k",
+      "claude-sonnet-4-6",
+      PROMPT,
+      silentLogger,
+      client,
+    );
+    expect(result.rawFindings).toHaveLength(1);
+  });
+
+  test("recovers JSON when the model adds prose before/after the object", async () => {
+    const noisy =
+      "Here are the findings I identified:\n\n" +
+      JSON.stringify({ findings: [{ finding_type: "noisy_prose" }] }) +
+      "\n\nLet me know if you need more.";
+    const client = makeClient({ responses: [{ kind: "ok", text: noisy }] });
+    const result = await callAgent(
+      "k",
+      "claude-sonnet-4-6",
+      PROMPT,
+      silentLogger,
+      client,
+    );
+    expect(result.rawFindings).toHaveLength(1);
+  });
+
   test("computes cost from the usage block", async () => {
     const client = makeClient({
       responses: [
@@ -141,5 +198,32 @@ describe("estimateCost", () => {
   test("falls back to default pricing for unknown models", () => {
     const fallback = estimateCost("future-model", 100_000, 10_000);
     expect(fallback).toBeGreaterThan(0);
+  });
+});
+
+describe("extractJsonPayload", () => {
+  test("returns text unchanged when it is already raw JSON", () => {
+    const raw = '{"findings":[]}';
+    expect(extractJsonPayload(raw)).toBe(raw);
+  });
+
+  test("strips a ```json fence", () => {
+    const text = '```json\n{"findings":[]}\n```';
+    expect(extractJsonPayload(text)).toBe('{"findings":[]}');
+  });
+
+  test("strips a bare ``` fence", () => {
+    const text = '```\n{"findings":[]}\n```';
+    expect(extractJsonPayload(text)).toBe('{"findings":[]}');
+  });
+
+  test("strips a fence even without a trailing newline", () => {
+    const text = '```json{"findings":[]}```';
+    expect(extractJsonPayload(text)).toBe('{"findings":[]}');
+  });
+
+  test("recovers from prose surrounding a JSON object", () => {
+    const text = "Here are findings:\n{\"findings\":[]}\nDone.";
+    expect(extractJsonPayload(text)).toBe('{"findings":[]}');
   });
 });

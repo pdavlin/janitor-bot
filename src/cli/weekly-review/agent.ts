@@ -137,9 +137,10 @@ export async function callAgent(
   }
 
   const text = extractTextBlock(response);
+  const json = extractJsonPayload(text);
   let parsed: { findings?: unknown[] };
   try {
-    parsed = JSON.parse(text) as { findings?: unknown[] };
+    parsed = JSON.parse(json) as { findings?: unknown[] };
   } catch (err) {
     throw new AgentResponseError(
       `agent returned non-JSON content: ${err instanceof Error ? err.message : String(err)}`,
@@ -160,6 +161,33 @@ export async function callAgent(
     outputTokens: response.usage.output_tokens,
     estimatedCostUsd: cost,
   };
+}
+
+/**
+ * Strips the model's response down to the bare JSON payload.
+ *
+ * Even with explicit "output strict JSON" instructions, models often
+ * wrap output in a ```json ... ``` markdown fence for readability.
+ * This helper:
+ *   1. Returns the inside of a fenced block when one exists.
+ *   2. Otherwise extracts from the first `{` to the last `}` so prose
+ *      before/after the object (rare but possible) doesn't break parsing.
+ *   3. Falls back to the raw, trimmed text.
+ *
+ * Exported for unit tests; the runtime call path goes through
+ * `callAgent`.
+ */
+export function extractJsonPayload(text: string): string {
+  const fence = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (fence && fence[1]) return fence[1].trim();
+
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first !== -1 && last !== -1 && last > first) {
+    return text.substring(first, last + 1);
+  }
+
+  return text.trim();
 }
 
 function extractTextBlock(response: {
