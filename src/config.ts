@@ -131,7 +131,7 @@ export function loadConfig(): Config {
     logLevel,
     port,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-    agentModel: process.env.AGENT_MODEL ?? "claude-sonnet-4-7",
+    agentModel: process.env.AGENT_MODEL ?? "claude-sonnet-4-6",
     agentHistoryWeeks,
   };
 }

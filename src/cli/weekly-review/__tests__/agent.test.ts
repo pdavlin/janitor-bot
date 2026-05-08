@@ -61,7 +61,7 @@ describe("callAgent", () => {
     });
     const result = await callAgent(
       "k",
-      "claude-sonnet-4-7",
+      "claude-sonnet-4-6",
       PROMPT,
       silentLogger,
       client,
@@ -81,7 +81,7 @@ describe("callAgent", () => {
     });
     const result = await callAgent(
       "k",
-      "claude-sonnet-4-7",
+      "claude-sonnet-4-6",
       PROMPT,
       silentLogger,
       client,
@@ -95,7 +95,7 @@ describe("callAgent", () => {
       responses: [{ kind: "throw", err: new Error("auth: invalid api key") }],
     });
     await expect(
-      callAgent("k", "claude-sonnet-4-7", PROMPT, silentLogger, client),
+      callAgent("k", "claude-sonnet-4-6", PROMPT, silentLogger, client),
     ).rejects.toThrow(/auth/);
     expect(client.calls).toBe(1);
   });
@@ -105,7 +105,7 @@ describe("callAgent", () => {
       responses: [{ kind: "ok", text: "not json" }],
     });
     await expect(
-      callAgent("k", "claude-sonnet-4-7", PROMPT, silentLogger, client),
+      callAgent("k", "claude-sonnet-4-6", PROMPT, silentLogger, client),
     ).rejects.toThrow(/non-JSON/);
   });
 
@@ -122,7 +122,7 @@ describe("callAgent", () => {
     });
     const result = await callAgent(
       "k",
-      "claude-sonnet-4-7",
+      "claude-sonnet-4-6",
       PROMPT,
       silentLogger,
       client,
@@ -134,7 +134,7 @@ describe("callAgent", () => {
 
 describe("estimateCost", () => {
   test("uses model-specific pricing", () => {
-    expect(estimateCost("claude-sonnet-4-7", 100_000, 10_000)).toBeCloseTo(0.45, 4);
+    expect(estimateCost("claude-sonnet-4-6", 100_000, 10_000)).toBeCloseTo(0.45, 4);
     expect(estimateCost("claude-opus-4-7", 100_000, 10_000)).toBeCloseTo(2.25, 4);
   });
 

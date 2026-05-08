@@ -27,7 +27,7 @@ function makeTestConfig(): Config {
     logLevel: "error",
     port: 3000,
     anthropicApiKey: undefined,
-    agentModel: "claude-sonnet-4-7",
+    agentModel: "claude-sonnet-4-6",
     agentHistoryWeeks: 8,
   };
 }

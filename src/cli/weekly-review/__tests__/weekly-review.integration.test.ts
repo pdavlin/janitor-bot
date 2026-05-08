@@ -137,7 +137,7 @@ beforeEach(() => {
   ]);
   process.env.DB_PATH = dbPath;
   process.env.ANTHROPIC_API_KEY = "sk-test";
-  process.env.AGENT_MODEL = "claude-sonnet-4-7";
+  process.env.AGENT_MODEL = "claude-sonnet-4-6";
   process.env.SLACK_BOT_TOKEN = "xoxb-test";
   process.env.SLACK_CHANNEL_ID = "C123";
   process.env.LOG_LEVEL = "error";
@@ -177,7 +177,7 @@ describe("weekly-review CLI integration", () => {
           id: "msg_test",
           type: "message",
           role: "assistant",
-          model: "claude-sonnet-4-7",
+          model: "claude-sonnet-4-6",
           stop_reason: "end_turn",
           content: [
             {

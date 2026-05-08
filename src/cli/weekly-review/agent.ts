@@ -46,14 +46,12 @@ interface ModelPricing {
 /**
  * Per-model pricing in USD per million tokens.
  *
- * Source: Anthropic public pricing page (verified at branch creation
- * 2026-05-05). Update when Anthropic ships price changes; this is
- * operator-internal telemetry, not billing.
- *
- * Sonnet 4.6 and 4.7 share the same $3/$15 schedule.
+ * Source: Anthropic public pricing page. Update when Anthropic ships
+ * price changes or new models; this is operator-internal telemetry,
+ * not billing. Unknown models fall back to `DEFAULT_PRICING` at the
+ * Sonnet rate.
  */
 const PRICING: Record<string, ModelPricing> = {
-  "claude-sonnet-4-7": { inputPerMTok: 3, outputPerMTok: 15 },
   "claude-sonnet-4-6": { inputPerMTok: 3, outputPerMTok: 15 },
   "claude-opus-4-7": { inputPerMTok: 15, outputPerMTok: 75 },
   "claude-haiku-4-5-20251001": { inputPerMTok: 1, outputPerMTok: 5 },
