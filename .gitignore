@@ -40,3 +40,10 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Weekly-review prompt eval dumps (contain transcript content; opt-in via --dump)
 weekly-review-dumps/
+
+# Claude Code per-machine state. Skills under .claude/skills/ are
+# tracked; everything else in .claude/ is local runtime/personal config.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+.claude/projects/
