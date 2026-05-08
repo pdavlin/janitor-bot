@@ -37,3 +37,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 *.db
 *.db-wal
 *.db-shm
+
+# Weekly-review prompt eval dumps (contain transcript content; opt-in via --dump)
+weekly-review-dumps/

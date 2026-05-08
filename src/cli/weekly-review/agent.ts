@@ -33,6 +33,8 @@ export class AgentResponseError extends Error {
 export interface AgentResult {
   /** Raw findings array from the parsed response. Validation is downstream. */
   rawFindings: unknown[];
+  /** Original response text before fence-stripping. Useful for dumps. */
+  rawText: string;
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd: number;
@@ -157,6 +159,7 @@ export async function callAgent(
 
   return {
     rawFindings,
+    rawText: text,
     inputTokens: response.usage.input_tokens,
     outputTokens: response.usage.output_tokens,
     estimatedCostUsd: cost,

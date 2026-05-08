@@ -23,10 +23,16 @@ import { defaultCompletedWeek, explicitWeek, type WeekWindow } from "./weekly-re
 import { acquireLock, clearStaleLock, ConcurrentRunError } from "./weekly-review/lock";
 import { computeBaseline } from "./weekly-review/baseline";
 import { gather, totalVotes } from "./weekly-review/gather";
-import { buildPrompt } from "./weekly-review/prompt";
-import { callAgent } from "./weekly-review/agent";
-import { validateFindings } from "./weekly-review/validation";
+import { buildPrompt, type BuiltPrompt } from "./weekly-review/prompt";
+import { callAgent, type AgentResult } from "./weekly-review/agent";
+import { validateFindings, type ValidationResult } from "./weekly-review/validation";
 import { RULE_AREAS } from "./weekly-review/rule-areas";
+import {
+  buildDump,
+  writeDump,
+  resolveGitSha,
+} from "./weekly-review/dump";
+import type { Transcript } from "./weekly-review/types";
 import {
   persistFindings,
   recordAgentTelemetry,
@@ -59,6 +65,10 @@ interface ParsedFlags {
   weekStarting?: string;
   minStrength?: "weak" | "moderate" | "strong";
   resolveArgs?: { runId: number; findingId: number; outcome: Extract<Outcome, "confirmed" | "rejected"> };
+  /** True when --dump was passed; full and dry-run modes capture a JSON record. */
+  dump: boolean;
+  /** Optional override for the dump destination directory. */
+  dumpDir?: string;
 }
 
 class CliInputError extends Error {
@@ -73,6 +83,8 @@ function parseArgs(argv: readonly string[]): ParsedFlags {
   let mode: ParsedFlags["mode"] = "full";
   let weekStarting: string | undefined;
   let minStrength: ParsedFlags["minStrength"];
+  let dump = false;
+  let dumpDir: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -108,6 +120,15 @@ function parseArgs(argv: readonly string[]): ParsedFlags {
         minStrength = next;
         break;
       }
+      case "--dump":
+        dump = true;
+        break;
+      case "--dump-dir": {
+        const next = argv[++i];
+        if (!next) throw new CliInputError("--dump-dir requires a path");
+        dumpDir = next;
+        break;
+      }
       default:
         if (arg.startsWith("--")) {
           throw new CliInputError(`unknown flag: ${arg}`);
@@ -136,10 +157,12 @@ function parseArgs(argv: readonly string[]): ParsedFlags {
       weekStarting,
       minStrength,
       resolveArgs: { runId, findingId, outcome },
+      dump,
+      dumpDir,
     };
   }
 
-  return { mode, weekStarting, minStrength };
+  return { mode, weekStarting, minStrength, dump, dumpDir };
 }
 
 function toSlackClientConfig(config: Config): SlackClientConfig {
@@ -154,6 +177,54 @@ function resolveWindow(flags: ParsedFlags): WeekWindow {
   return flags.weekStarting
     ? explicitWeek(flags.weekStarting)
     : defaultCompletedWeek();
+}
+
+interface WriteRunDumpInput {
+  flags: ParsedFlags;
+  mode: "full" | "dryRun";
+  model: string;
+  window: WeekWindow;
+  runId: number | null;
+  prompt: BuiltPrompt;
+  transcript: Transcript;
+  agentResult: AgentResult;
+  validated: ValidationResult;
+  logger: Logger;
+}
+
+const DEFAULT_DUMP_DIR = "./weekly-review-dumps";
+
+/**
+ * Persists a JSON dump of the run for offline prompt iteration.
+ * Failures are logged at warn level and never break the run — the
+ * dump is an aside, not a critical path.
+ */
+async function writeRunDump(input: WriteRunDumpInput): Promise<void> {
+  const dumpDir = input.flags.dumpDir ?? DEFAULT_DUMP_DIR;
+  const dump = buildDump({
+    mode: input.mode,
+    model: input.model,
+    window: input.window,
+    runId: input.runId,
+    prompt: input.prompt,
+    transcript: input.transcript,
+    response: {
+      rawText: input.agentResult.rawText,
+      inputTokens: input.agentResult.inputTokens,
+      outputTokens: input.agentResult.outputTokens,
+      estimatedCostUsd: input.agentResult.estimatedCostUsd,
+    },
+    validated: input.validated,
+    gitSha: resolveGitSha(),
+  });
+  try {
+    const path = await writeDump(dump, dumpDir);
+    input.logger.info("dump written", { path });
+  } catch (err) {
+    input.logger.warn("dump write failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 async function runFull(
@@ -244,6 +315,21 @@ async function runFull(
     );
 
     persistFindings(db, lock.runId, ordered);
+
+    if (flags.dump) {
+      await writeRunDump({
+        flags,
+        mode: "full",
+        model: config.agentModel,
+        window,
+        runId: lock.runId,
+        prompt,
+        transcript: gathered.transcript,
+        agentResult,
+        validated,
+        logger,
+      });
+    }
 
     const hitRate = getHitRate(db);
     const message =
@@ -407,6 +493,22 @@ async function runDryRun(
     ),
   );
   process.stdout.write("\n");
+
+  if (flags.dump) {
+    await writeRunDump({
+      flags,
+      mode: "dryRun",
+      model: config.agentModel,
+      window,
+      runId: null,
+      prompt,
+      transcript: gathered.transcript,
+      agentResult: result,
+      validated,
+      logger,
+    });
+  }
+
   return 0;
 }
 
