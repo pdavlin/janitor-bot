@@ -40,3 +40,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Weekly-review prompt eval dumps (contain transcript content; opt-in via --dump)
 weekly-review-dumps/
+
+# Claude Code per-machine config and skills. Project-level skills may
+# reference prod infrastructure (hostnames, paths) that we don't want
+# in the public repo. Keep all of .claude/ local.
+.claude/
