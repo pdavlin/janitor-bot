@@ -29,6 +29,7 @@ function makeTestConfig(): Config {
     anthropicApiKey: undefined,
     agentModel: "claude-sonnet-4-6",
     agentHistoryWeeks: 8,
+    operatorUserId: undefined,
   };
 }
 

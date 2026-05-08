@@ -27,7 +27,16 @@ export interface Config {
   agentModel: string;
   /** Past-findings lookback (in weeks) used by the prompt builder. */
   agentHistoryWeeks: number;
+  /**
+   * Slack user_id for direct operator notifications. When unset,
+   * `notifyOperator` calls become no-ops; the bot continues without
+   * any operator DM. The value, when present, must look like
+   * `U07ABC1234` (Slack user_id format).
+   */
+  operatorUserId: string | undefined;
 }
+
+const OPERATOR_USER_ID_PATTERN = /^[UW][A-Z0-9]{8,}$/;
 
 export function loadConfig(): Config {
   const rawPollInterval = process.env.POLL_INTERVAL_MINUTES;
@@ -119,6 +128,17 @@ export function loadConfig(): Config {
     agentHistoryWeeks = parsed;
   }
 
+  const rawOperatorUserId = process.env.OPERATOR_USER_ID;
+  let operatorUserId: string | undefined;
+  if (rawOperatorUserId !== undefined && rawOperatorUserId !== "") {
+    if (!OPERATOR_USER_ID_PATTERN.test(rawOperatorUserId)) {
+      throw new Error(
+        `Invalid OPERATOR_USER_ID: "${rawOperatorUserId}". Expected a Slack user_id (e.g. "U07ABC1234").`,
+      );
+    }
+    operatorUserId = rawOperatorUserId;
+  }
+
   return {
     slackWebhookUrl: process.env.SLACK_WEBHOOK_URL,
     slackBotToken,
@@ -133,5 +153,6 @@ export function loadConfig(): Config {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     agentModel: process.env.AGENT_MODEL ?? "claude-sonnet-4-6",
     agentHistoryWeeks,
+    operatorUserId,
   };
 }
