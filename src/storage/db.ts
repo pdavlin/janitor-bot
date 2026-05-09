@@ -231,6 +231,32 @@ CREATE TABLE IF NOT EXISTS agent_findings (
 );
 `;
 
+const CREATE_SLACK_FINDING_MESSAGES_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS slack_finding_messages (
+  run_id          INTEGER NOT NULL REFERENCES agent_runs(id),
+  finding_id      INTEGER NOT NULL REFERENCES agent_findings(id),
+  channel         TEXT    NOT NULL,
+  ts              TEXT    NOT NULL,
+  parent_ts       TEXT    NOT NULL,
+  posted_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+  last_updated_at TEXT,
+  PRIMARY KEY (run_id, finding_id)
+);
+`;
+
+const CREATE_FINDING_RESOLUTION_EVENTS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS finding_resolution_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  finding_id  INTEGER NOT NULL REFERENCES agent_findings(id),
+  user_id     TEXT    NOT NULL,
+  direction   TEXT    NOT NULL CHECK (direction IN ('confirm', 'reject')),
+  action      TEXT    NOT NULL CHECK (action IN ('added', 'removed')),
+  event_ts    TEXT    NOT NULL,
+  received_at TEXT    NOT NULL,
+  post_window INTEGER NOT NULL DEFAULT 0
+);
+`;
+
 const INSERT_PLAY_SQL = `
 INSERT INTO plays (
   game_pk, play_index, date, fielder_id, fielder_name, fielder_position,
@@ -334,6 +360,16 @@ export function createDatabase(dbPath: string): Database {
   );
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_agent_findings_outcome ON agent_findings(outcome) WHERE outcome = 'pending';",
+  );
+
+  db.run(CREATE_SLACK_FINDING_MESSAGES_TABLE_SQL);
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_slack_finding_messages_ts ON slack_finding_messages(channel, ts);",
+  );
+
+  db.run(CREATE_FINDING_RESOLUTION_EVENTS_TABLE_SQL);
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_finding_resolution_events_finding ON finding_resolution_events(finding_id, direction, user_id);",
   );
 
   return db;

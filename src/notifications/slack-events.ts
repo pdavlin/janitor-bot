@@ -20,6 +20,13 @@ import {
   isPostWindow,
   reactionToDirection,
 } from "./slack-votes-store";
+import { lookupFindingMessageByTs } from "./slack-finding-messages-store";
+import {
+  insertFindingResolutionEvent,
+  isFindingPostWindow,
+  reactionToResolutionDirection,
+  type ResolutionDirection,
+} from "./finding-resolution-events-store";
 import { getUserInfo, isVotingEligible } from "./slack-user-cache";
 import type { SlackClientConfig } from "./slack-client";
 import { attributeToPlay, parseTags } from "./comment-tags";
@@ -179,9 +186,27 @@ async function handleReactionEvent(
   >,
   ctx: DispatchContext,
 ): Promise<void> {
-  const direction = reactionToDirection(event.reaction);
-  if (!direction) return;
+  const playDirection = reactionToDirection(event.reaction);
+  if (playDirection) {
+    await handlePlayVoteReaction(event, playDirection, ctx);
+    return;
+  }
 
+  const resolutionDirection = reactionToResolutionDirection(event.reaction);
+  if (resolutionDirection) {
+    await handleFindingResolutionReaction(event, resolutionDirection, ctx);
+    return;
+  }
+}
+
+async function handlePlayVoteReaction(
+  event: Extract<
+    SlackEvent,
+    { type: "reaction_added" | "reaction_removed" }
+  >,
+  direction: "fire" | "trash",
+  ctx: DispatchContext,
+): Promise<void> {
   const lookup = lookupPlayMessageByTs(ctx.db, event.item.channel, event.item.ts);
   if (!lookup) return;
 
@@ -204,6 +229,44 @@ async function handleReactionEvent(
     ctx.logger.error("vote insert failed", {
       gamePk: lookup.gamePk,
       playIndex: lookup.playIndex,
+      direction,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+async function handleFindingResolutionReaction(
+  event: Extract<
+    SlackEvent,
+    { type: "reaction_added" | "reaction_removed" }
+  >,
+  direction: ResolutionDirection,
+  ctx: DispatchContext,
+): Promise<void> {
+  const lookup = lookupFindingMessageByTs(
+    ctx.db,
+    event.item.channel,
+    event.item.ts,
+  );
+  if (!lookup) return;
+
+  const userInfo = await getUserInfo(ctx.slackConfig, event.user, ctx.logger);
+  if (!isVotingEligible(userInfo)) return;
+
+  const postWindow = isFindingPostWindow(ctx.db, lookup.findingId);
+
+  try {
+    insertFindingResolutionEvent(ctx.db, {
+      findingId: lookup.findingId,
+      userId: event.user,
+      direction,
+      action: event.type === "reaction_added" ? "added" : "removed",
+      eventTs: event.event_ts,
+      postWindow,
+    });
+  } catch (err) {
+    ctx.logger.error("finding resolution insert failed", {
+      findingId: lookup.findingId,
       direction,
       error: err instanceof Error ? err.message : String(err),
     });

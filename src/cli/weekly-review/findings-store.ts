@@ -11,13 +11,17 @@
 import type { Database } from "bun:sqlite";
 import type { Finding, FindingRow, HitRate, Trend, Outcome } from "./types";
 
-/** Inserts every finding for a run inside one transaction. */
+/**
+ * Inserts every finding for a run inside one transaction. Returns the
+ * inserted ids in input order so callers can map finding[i] -> id[i] without
+ * a follow-up SELECT.
+ */
 export function persistFindings(
   db: Database,
   runId: number,
   findings: readonly Finding[],
-): void {
-  if (findings.length === 0) return;
+): number[] {
+  if (findings.length === 0) return [];
 
   const insert = db.prepare(`
     INSERT INTO agent_findings (
@@ -25,12 +29,14 @@ export function persistFindings(
       evidence_play_ids, suspected_rule_area, trend
     ) VALUES (
       $runId, $type, $desc, $sev, $strength, $plays, $area, $trend
-    );
+    )
+    RETURNING id;
   `);
 
+  const insertedIds: number[] = [];
   const tx = db.transaction((items: readonly Finding[]) => {
     for (const f of items) {
-      insert.run({
+      const row = insert.get({
         $runId: runId,
         $type: f.finding_type,
         $desc: f.description,
@@ -39,10 +45,12 @@ export function persistFindings(
         $plays: JSON.stringify(f.evidence_play_ids),
         $area: f.suspected_rule_area,
         $trend: f.trend,
-      });
+      }) as { id: number };
+      insertedIds.push(row.id);
     }
   });
   tx(findings);
+  return insertedIds;
 }
 
 /**

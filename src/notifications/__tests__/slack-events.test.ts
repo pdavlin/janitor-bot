@@ -19,6 +19,7 @@ import { createHmac } from "node:crypto";
 import { Database } from "bun:sqlite";
 import { createDatabase } from "../../storage/db";
 import { recordPlayMessage } from "../slack-messages-store";
+import { recordFindingMessage } from "../slack-finding-messages-store";
 import {
   verifySlackSignature,
   isDuplicateEvent,
@@ -308,5 +309,137 @@ describe("dispatchEvent", () => {
     await dispatchEvent({ type: "url_verification", challenge: "x" }, ctx());
 
     expect(voteCount()).toBe(0);
+  });
+
+  function resolutionCount(): number {
+    return (
+      db
+        .prepare("SELECT COUNT(*) AS c FROM finding_resolution_events;")
+        .get() as { c: number }
+    ).c;
+  }
+
+  test("white_check_mark on a known finding ts inserts confirm row", async () => {
+    db.prepare(
+      `INSERT INTO agent_runs (week_starting, model, started_at, status)
+       VALUES ('2026-04-26', 'claude-sonnet-4-6', datetime('now'), 'started');`,
+    ).run();
+    const runId = (db.prepare(`SELECT id FROM agent_runs ORDER BY id DESC LIMIT 1;`).get() as { id: number }).id;
+    db.prepare(
+      `INSERT INTO agent_findings
+         (run_id, finding_type, description, severity, evidence_strength,
+          evidence_play_ids, suspected_rule_area)
+        VALUES ($r, 'tx', 'd', 'watch', 'moderate', '[1]', 'area');`,
+    ).run({ $r: runId });
+    const findingId = (db.prepare(`SELECT id FROM agent_findings ORDER BY id DESC LIMIT 1;`).get() as { id: number }).id;
+    recordFindingMessage(db, runId, findingId, "C1", "100.001", "99.000");
+
+    await dispatchEvent(
+      makeEnvelope({ reaction: "white_check_mark" }),
+      ctx(),
+    );
+
+    const row = db
+      .prepare("SELECT * FROM finding_resolution_events;")
+      .get() as {
+      finding_id: number;
+      user_id: string;
+      direction: string;
+      action: string;
+    };
+    expect(row).toMatchObject({
+      finding_id: findingId,
+      user_id: "U123",
+      direction: "confirm",
+      action: "added",
+    });
+    expect(voteCount()).toBe(0);
+  });
+
+  test("x reaction on a known finding ts inserts reject row", async () => {
+    db.prepare(
+      `INSERT INTO agent_runs (week_starting, model, started_at, status)
+       VALUES ('2026-04-26', 'claude-sonnet-4-6', datetime('now'), 'started');`,
+    ).run();
+    const runId = (db.prepare(`SELECT id FROM agent_runs ORDER BY id DESC LIMIT 1;`).get() as { id: number }).id;
+    db.prepare(
+      `INSERT INTO agent_findings
+         (run_id, finding_type, description, severity, evidence_strength,
+          evidence_play_ids, suspected_rule_area)
+        VALUES ($r, 'tx', 'd', 'watch', 'moderate', '[1]', 'area');`,
+    ).run({ $r: runId });
+    const findingId = (db.prepare(`SELECT id FROM agent_findings ORDER BY id DESC LIMIT 1;`).get() as { id: number }).id;
+    recordFindingMessage(db, runId, findingId, "C1", "100.001", "99.000");
+
+    await dispatchEvent(makeEnvelope({ reaction: "x" }), ctx());
+
+    const row = db
+      .prepare("SELECT direction, action FROM finding_resolution_events;")
+      .get() as { direction: string; action: string };
+    expect(row).toEqual({ direction: "reject", action: "added" });
+  });
+
+  test("ineligible reactor (bot) does not write a resolution row", async () => {
+    db.prepare(
+      `INSERT INTO agent_runs (week_starting, model, started_at, status)
+       VALUES ('2026-04-26', 'claude-sonnet-4-6', datetime('now'), 'started');`,
+    ).run();
+    const runId = (db.prepare(`SELECT id FROM agent_runs ORDER BY id DESC LIMIT 1;`).get() as { id: number }).id;
+    db.prepare(
+      `INSERT INTO agent_findings
+         (run_id, finding_type, description, severity, evidence_strength,
+          evidence_play_ids, suspected_rule_area)
+        VALUES ($r, 'tx', 'd', 'watch', 'moderate', '[1]', 'area');`,
+    ).run({ $r: runId });
+    const findingId = (db.prepare(`SELECT id FROM agent_findings ORDER BY id DESC LIMIT 1;`).get() as { id: number }).id;
+    recordFindingMessage(db, runId, findingId, "C1", "100.001", "99.000");
+
+    usersInfoResponse = {
+      is_bot: true,
+      is_restricted: false,
+      is_ultra_restricted: false,
+    };
+
+    await dispatchEvent(
+      makeEnvelope({ reaction: "white_check_mark" }),
+      ctx(),
+    );
+
+    expect(resolutionCount()).toBe(0);
+  });
+
+  test("white_check_mark on a non-finding ts is ignored", async () => {
+    await dispatchEvent(
+      makeEnvelope({ reaction: "white_check_mark", ts: "999.999" }),
+      ctx(),
+    );
+
+    expect(resolutionCount()).toBe(0);
+  });
+
+  test("reaction_removed on a finding ts records action=removed", async () => {
+    db.prepare(
+      `INSERT INTO agent_runs (week_starting, model, started_at, status)
+       VALUES ('2026-04-26', 'claude-sonnet-4-6', datetime('now'), 'started');`,
+    ).run();
+    const runId = (db.prepare(`SELECT id FROM agent_runs ORDER BY id DESC LIMIT 1;`).get() as { id: number }).id;
+    db.prepare(
+      `INSERT INTO agent_findings
+         (run_id, finding_type, description, severity, evidence_strength,
+          evidence_play_ids, suspected_rule_area)
+        VALUES ($r, 'tx', 'd', 'watch', 'moderate', '[1]', 'area');`,
+    ).run({ $r: runId });
+    const findingId = (db.prepare(`SELECT id FROM agent_findings ORDER BY id DESC LIMIT 1;`).get() as { id: number }).id;
+    recordFindingMessage(db, runId, findingId, "C1", "100.001", "99.000");
+
+    await dispatchEvent(
+      makeEnvelope({ type: "reaction_removed", reaction: "white_check_mark" }),
+      ctx(),
+    );
+
+    const row = db
+      .prepare("SELECT direction, action FROM finding_resolution_events;")
+      .get() as { direction: string; action: string };
+    expect(row).toEqual({ direction: "confirm", action: "removed" });
   });
 });
