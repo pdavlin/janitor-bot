@@ -46,11 +46,30 @@ describe("persistFindings", () => {
 
   test("is a no-op for an empty findings array", () => {
     const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-6");
-    persistFindings(db, lock.runId, []);
+    const ids = persistFindings(db, lock.runId, []);
+    expect(ids).toEqual([]);
     const count = db
       .prepare(`SELECT COUNT(*) AS c FROM agent_findings WHERE run_id = $id;`)
       .get({ $id: lock.runId }) as { c: number };
     expect(count.c).toBe(0);
+  });
+
+  test("returns inserted ids in input order", () => {
+    const lock = acquireLock(db, "2026-04-26", "claude-sonnet-4-6");
+    const ids = persistFindings(db, lock.runId, [
+      sampleFinding({ finding_type: "first" }),
+      sampleFinding({ finding_type: "second" }),
+      sampleFinding({ finding_type: "third" }),
+    ]);
+    expect(ids).toHaveLength(3);
+    expect(ids[1]).toBe(ids[0]! + 1);
+    expect(ids[2]).toBe(ids[0]! + 2);
+
+    const rows = db
+      .prepare(`SELECT id, finding_type FROM agent_findings WHERE run_id = $id ORDER BY id ASC;`)
+      .all({ $id: lock.runId }) as { id: number; finding_type: string }[];
+    expect(rows.map((r) => r.id)).toEqual(ids);
+    expect(rows.map((r) => r.finding_type)).toEqual(["first", "second", "third"]);
   });
 });
 

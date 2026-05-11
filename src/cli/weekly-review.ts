@@ -54,6 +54,7 @@ import {
   orderFindings,
   postDigest,
 } from "./weekly-review/digest";
+import { postFindingReplies } from "./weekly-review/post-finding-replies";
 import type { Outcome } from "./weekly-review/types";
 
 interface ParsedFlags {
@@ -368,7 +369,7 @@ async function runFull(
       byMinStrength(flags.minStrength),
     );
 
-    persistFindings(db, lock.runId, ordered);
+    const findingIds = persistFindings(db, lock.runId, ordered);
 
     let dumpPath: string | null = null;
     if (flags.dump) {
@@ -404,6 +405,23 @@ async function runFull(
     if (!ts) {
       releaseError = "slack post failed";
       return 1;
+    }
+
+    if (ordered.length > 0) {
+      try {
+        await postFindingReplies(
+          db,
+          slackConfig,
+          { channel: config.slackChannelId, ts: ts.ts, runId: lock.runId },
+          ordered,
+          findingIds,
+          logger,
+        );
+      } catch (err) {
+        logger.warn("post-finding replies failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     recordAgentTelemetry(

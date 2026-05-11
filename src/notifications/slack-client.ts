@@ -257,6 +257,32 @@ async function postThreadMessage(
 }
 
 /**
+ * Posts a plain-text thread reply and returns the channel + ts on success.
+ *
+ * The weekly-review digest is rendered as plain mrkdwn text (no blocks), so
+ * its per-finding replies follow the same shape. Returns null on auth or
+ * API failure so callers can record per-finding success/failure.
+ */
+export async function postThreadTextWithTs(
+  config: SlackClientConfig,
+  channel: string,
+  threadTs: string,
+  text: string,
+  logger: Logger,
+): Promise<PostMessageResult | null> {
+  if (!config.botToken) {
+    logger.debug("postThreadTextWithTs skipped: no bot token");
+    return null;
+  }
+  return callSlackApi<PostMessageResult>(
+    "chat.postMessage",
+    { channel, thread_ts: threadTs, text },
+    config.botToken,
+    logger,
+  );
+}
+
+/**
  * Reactions seeded on every fresh play reply so users vote with one tap.
  *
  * The dispatcher already filters bot reactions out via the is_bot check in
@@ -292,6 +318,44 @@ export async function seedVoteReactions(
     );
     if (!result) {
       logger.warn("seed reaction failed", { reaction, channel, ts });
+    }
+  }
+}
+
+/** Reactions seeded on every fresh finding reply for confirm/reject voting. */
+const CONFIRM_REJECT_SEED_REACTIONS: readonly string[] = [
+  "white_check_mark",
+  "x",
+];
+
+/**
+ * Seeds :white_check_mark: and :x: reactions on a finding thread reply so
+ * users tap to confirm or reject the finding. Same failure semantics as
+ * seedVoteReactions: logged and swallowed.
+ */
+export async function seedConfirmRejectReactions(
+  config: SlackClientConfig,
+  channel: string,
+  ts: string,
+  logger: Logger,
+): Promise<void> {
+  if (!config.botToken) {
+    logger.debug("seedConfirmRejectReactions skipped: no bot token");
+    return;
+  }
+  for (const reaction of CONFIRM_REJECT_SEED_REACTIONS) {
+    const result = await callSlackApi<{ ok: true }>(
+      "reactions.add",
+      { channel, timestamp: ts, name: reaction },
+      config.botToken,
+      logger,
+    );
+    if (!result) {
+      logger.warn("seed confirm/reject reaction failed", {
+        reaction,
+        channel,
+        ts,
+      });
     }
   }
 }
