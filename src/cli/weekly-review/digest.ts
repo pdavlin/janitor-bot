@@ -4,8 +4,8 @@
  * One mrkdwn message string per run. The baseline always leads (ground
  * truth), the LLM section follows (interpretation), and a hit-rate
  * footer closes. Findings are sorted strictly by severity ->
- * evidence_strength -> evidence count, and each description is
- * truncated to 280 chars in the post (the DB row keeps the full text).
+ * evidence_strength -> evidence count and rendered with their full
+ * description.
  *
  * Three fallback shapes are supported:
  *   - insufficient: skipped LLM call due to minimum-signal gate
@@ -22,7 +22,6 @@ import { renderBaselineForSlack, type Baseline } from "./baseline";
 import type { Finding, HitRate } from "./types";
 import type { WeekWindow } from "./week-window";
 
-const FINDING_DESCRIPTION_LIMIT = 280;
 const HIT_RATE_FLOOR = 5;
 
 interface DigestInput {
@@ -66,11 +65,6 @@ export function byMinStrength(
   return (f) => STRENGTH_RANK[f.evidence_strength] <= threshold;
 }
 
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.substring(0, max - 1) + "…";
-}
-
 function formatHitRate(h: HitRate): string {
   if (h.total < HIT_RATE_FLOOR) {
     return `hit rate: insufficient data (${h.total} resolved so far) — resolve findings via --resolve`;
@@ -83,9 +77,8 @@ function formatHeader(window: WeekWindow): string {
 }
 
 function formatFindingLine(f: Finding): string {
-  const desc = truncate(f.description, FINDING_DESCRIPTION_LIMIT);
   const playCount = f.evidence_play_ids.length;
-  return `• [${f.severity}, ${f.evidence_strength}] ${desc} — area: ${f.suspected_rule_area} — ${playCount} plays`;
+  return `• [${f.severity}, ${f.evidence_strength}] ${f.description} — area: ${f.suspected_rule_area} — ${playCount} plays`;
 }
 
 /** Full digest with findings. */

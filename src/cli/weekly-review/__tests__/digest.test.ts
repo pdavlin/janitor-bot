@@ -93,7 +93,7 @@ describe("buildDigest", () => {
     expect(message).toContain("--resolve 42");
   });
 
-  test("truncates a description longer than 280 chars", () => {
+  test("renders long descriptions in full (no truncation)", () => {
     const long = "a".repeat(400);
     const message = buildDigest({
       window: WINDOW,
@@ -102,8 +102,8 @@ describe("buildDigest", () => {
       hitRate: HIT_RATE_RICH,
       runId: 1,
     });
-    expect(message).toContain("…");
-    expect(message.includes("a".repeat(400))).toBe(false);
+    expect(message).toContain(long);
+    expect(message).not.toContain("…");
   });
 
   test("hit-rate footer says insufficient data when fewer than 5 resolved", () => {
