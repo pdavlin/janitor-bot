@@ -22,8 +22,6 @@ import {
 import { recordFindingMessage } from "../../notifications/slack-finding-messages-store";
 import type { Finding } from "./types";
 
-const FINDING_REPLY_DESCRIPTION_LIMIT = 280;
-
 export interface FindingReplyResult {
   findingId: number;
   ok: boolean;
@@ -36,15 +34,9 @@ export interface PostFindingRepliesParent {
   runId: number;
 }
 
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.substring(0, max - 1) + "…";
-}
-
 export function renderFindingForReply(f: Finding): string {
-  const desc = truncate(f.description, FINDING_REPLY_DESCRIPTION_LIMIT);
   return [
-    `[${f.severity}, ${f.evidence_strength}] ${desc}`,
+    `[${f.severity}, ${f.evidence_strength}] ${f.description}`,
     `Area: ${f.suspected_rule_area} · ${f.evidence_play_ids.length} plays`,
     `React :white_check_mark: to confirm or :x: to reject within 24h.`,
   ].join("\n");

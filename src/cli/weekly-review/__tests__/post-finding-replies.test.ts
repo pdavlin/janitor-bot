@@ -105,12 +105,12 @@ describe("renderFindingForReply", () => {
     expect(text).toContain(":x:");
   });
 
-  test("truncates long descriptions to 280 chars", () => {
+  test("renders long descriptions in full (no truncation)", () => {
     const long = "x".repeat(500);
     const text = renderFindingForReply(sampleFinding({ description: long }));
     const firstLine = text.split("\n")[0]!;
-    expect(firstLine.length).toBeLessThanOrEqual(280 + "[watch, moderate] ".length);
-    expect(firstLine.endsWith("…")).toBe(true);
+    expect(firstLine).toContain(long);
+    expect(firstLine.endsWith("…")).toBe(false);
   });
 });
 
