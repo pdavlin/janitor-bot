@@ -15,6 +15,7 @@ interface TierInput {
   targetBase: string;
   creditChain: string;
   hasVideo: boolean;
+  isOverturned: boolean;
 }
 
 /**
@@ -24,6 +25,7 @@ interface TierInput {
  *   - Target base:  Home = 4, 3B = 3, 2B = 1
  *   - Direct throw (no relay, 2 segments in credit chain): 2
  *   - Video available: 1
+ *   - Out came via review overturn: -2 (community treats these as less impressive)
  *
  * Total mapped to tier: 5+ high, 3-4 medium, 0-2 low.
  *
@@ -51,6 +53,11 @@ export function calculateTier(play: TierInput): Tier {
   // Video availability bonus
   if (play.hasVideo) {
     score += 1;
+  }
+
+  // Overturn penalty: the out only exists because of a replay reversal.
+  if (play.isOverturned) {
+    score -= 2;
   }
 
   if (score >= 5) return "high";

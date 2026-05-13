@@ -125,6 +125,7 @@ export async function processGame(
       targetBase: play.targetBase,
       creditChain: play.creditChain,
       hasVideo: play.videoUrl !== null,
+      isOverturned: play.isOverturned,
     });
   }
 

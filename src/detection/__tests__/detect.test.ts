@@ -99,6 +99,7 @@ function makePlay(
     description?: string;
     batterName?: string;
     outs?: number;
+    isOverturned?: boolean;
   },
 ): Play {
   return {
@@ -119,6 +120,13 @@ function makePlay(
     },
     runners,
     count: { outs: overrides?.outs ?? 0 },
+    ...(overrides?.isOverturned !== undefined && {
+      reviewDetails: {
+        isOverturned: overrides.isOverturned,
+        inProgress: false,
+        reviewType: "MA",
+      },
+    }),
   };
 }
 
@@ -366,6 +374,51 @@ describe("detectOutfieldAssists", () => {
 
     expect(results).toHaveLength(1);
     expect(results[0].outs).toBe(1);
+  });
+
+  test("flags isOverturned when reviewDetails.isOverturned is true", () => {
+    const credits = [
+      makeCredit("f_assist_of", "9", "RF", 500),
+      makeCredit("f_putout", "4", "2B", 501),
+    ];
+    const runner = makeRunner({ isOut: true, outBase: "2B", credits });
+    const play = makePlay([runner], { isOverturned: true });
+    const feed = makeLiveFeed([play]);
+
+    const results = detectOutfieldAssists(feed, 12345, "2025-06-15");
+
+    expect(results).toHaveLength(1);
+    expect(results[0].isOverturned).toBe(true);
+  });
+
+  test("does not flag isOverturned when reviewDetails is absent", () => {
+    const credits = [
+      makeCredit("f_assist_of", "9", "RF", 500),
+      makeCredit("f_putout", "4", "2B", 501),
+    ];
+    const runner = makeRunner({ isOut: true, outBase: "2B", credits });
+    const play = makePlay([runner]);
+    const feed = makeLiveFeed([play]);
+
+    const results = detectOutfieldAssists(feed, 12345, "2025-06-15");
+
+    expect(results).toHaveLength(1);
+    expect(results[0].isOverturned).toBe(false);
+  });
+
+  test("does not flag isOverturned when reviewDetails.isOverturned is false (upheld review)", () => {
+    const credits = [
+      makeCredit("f_assist_of", "9", "RF", 500),
+      makeCredit("f_putout", "4", "2B", 501),
+    ];
+    const runner = makeRunner({ isOut: true, outBase: "2B", credits });
+    const play = makePlay([runner], { isOverturned: false });
+    const feed = makeLiveFeed([play]);
+
+    const results = detectOutfieldAssists(feed, 12345, "2025-06-15");
+
+    expect(results).toHaveLength(1);
+    expect(results[0].isOverturned).toBe(false);
   });
 
   test("defaults outs to 0 when play.count is missing", () => {

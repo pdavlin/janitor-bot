@@ -60,6 +60,8 @@ export interface DetectedPlay {
   outs: number;
   /** Comma-separated base positions with runners, e.g. "1st, 2nd". Empty string if bases empty. */
   runnersOn: string;
+  /** True when the recorded out came via a successful replay-review challenge that reversed a safe call. */
+  isOverturned: boolean;
   /** Savant playId UUID extracted from the last pitch event, when available. */
   playId: string | null;
   /** Outcome of the most recent Savant video-fetch attempt. */

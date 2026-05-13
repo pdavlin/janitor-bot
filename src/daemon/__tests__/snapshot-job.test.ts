@@ -49,6 +49,7 @@ function makePlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
     tier: "high",
     outs: 0,
     runnersOn: "",
+    isOverturned: false,
     playId: null,
     fetchStatus: null,
     videoUrl: null,
