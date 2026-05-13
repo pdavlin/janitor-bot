@@ -33,6 +33,7 @@ function makePlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
     tier: "high",
     outs: 2,
     runnersOn: "1st_2nd",
+    isOverturned: false,
     playId: null,
     fetchStatus: "success",
     videoUrl: "https://savant.example/clip.mp4",

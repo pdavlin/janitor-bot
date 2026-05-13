@@ -120,6 +120,7 @@ function seedPlay(db: Database, overrides: Partial<DetectedPlay> = {}): number {
     tier: "high",
     outs: 1,
     runnersOn: "1st",
+    isOverturned: false,
     playId: null,
     fetchStatus: null,
     videoUrl: null,

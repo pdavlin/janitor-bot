@@ -16,6 +16,7 @@ export const RULE_AREAS = [
   "ranking.ts:target_base_scores", // Home=4, 3B=3, 2B=1
   "ranking.ts:direct_throw_bonus", // segments.length === 2 -> +2
   "ranking.ts:video_bonus", // hasVideo -> +1
+  "ranking.ts:overturn_penalty", // isOverturned -> -2
   "ranking.ts:tier_thresholds", // score >= 5 high, >= 3 medium, else low
 
   // detect.ts (detection eligibility)

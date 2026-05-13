@@ -159,6 +159,19 @@ export interface PlayCount {
   outs: number;
 }
 
+/**
+ * Replay-review metadata. Present only on plays that were challenged
+ * or crew-reviewed. `isOverturned` is true when the call on the field
+ * was reversed by the review.
+ */
+export interface ReviewDetails {
+  isOverturned: boolean;
+  inProgress: boolean;
+  /** e.g. "MA" (manager challenge), "MJ" (crew judgment). */
+  reviewType: string;
+  challengeTeamId?: number;
+}
+
 export interface Play {
   about: PlayAbout;
   result: PlayResult;
@@ -166,6 +179,7 @@ export interface Play {
   runners: Runner[];
   playEvents?: PlayEvent[];
   count?: PlayCount;
+  reviewDetails?: ReviewDetails;
 }
 
 export interface BoxscorePlayerEntry {

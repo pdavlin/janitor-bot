@@ -179,6 +179,7 @@ export function detectOutfieldAssists(
       const creditChain = buildCreditChain(runner.credits ?? []);
       const outs = play.count?.outs ?? 0;
       const runnersOn = formatRunnersOn(play.runners);
+      const isOverturned = play.reviewDetails?.isOverturned === true;
 
       detected.push({
         gamePk,
@@ -202,6 +203,7 @@ export function detectOutfieldAssists(
         tier: "low",
         outs,
         runnersOn,
+        isOverturned,
         playId: null,
         fetchStatus: null,
         videoUrl: null,
