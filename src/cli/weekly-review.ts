@@ -395,7 +395,6 @@ async function runFull(
             baseline,
             findings: ordered,
             hitRate,
-            runId: lock.runId,
           })
         : validated.rejected.length > 0
           ? buildAllRejectedDigest(window, baseline, hitRate, validated.rejected.length)

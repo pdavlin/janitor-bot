@@ -2,10 +2,14 @@
  * Slack digest formatter.
  *
  * One mrkdwn message string per run. The baseline always leads (ground
- * truth), the LLM section follows (interpretation), and a hit-rate
- * footer closes. Findings are sorted strictly by severity ->
- * evidence_strength -> evidence count and rendered with their full
- * description.
+ * truth), then a hit-rate footer closes. The full-run parent no longer
+ * inlines findings — each accepted finding is posted as its own thread
+ * reply (see post-finding-replies.ts), and duplicating the content in
+ * the parent was just noise.
+ *
+ * Findings are still sorted by severity -> evidence_strength ->
+ * evidence count by `orderFindings` so the threaded replies appear in
+ * priority order.
  *
  * Three fallback shapes are supported:
  *   - insufficient: skipped LLM call due to minimum-signal gate
@@ -29,7 +33,6 @@ interface DigestInput {
   baseline: Baseline;
   findings: readonly Finding[];
   hitRate: HitRate;
-  runId: number;
 }
 
 /** Strict ordering: severity desc, evidence_strength desc, play count desc. */
@@ -76,15 +79,16 @@ function formatHeader(window: WeekWindow): string {
   return `*Weekly classification review — week of ${window.weekStarting} to ${window.weekEnding}*`;
 }
 
-function formatFindingLine(f: Finding): string {
-  const playCount = f.evidence_play_ids.length;
-  return `• [${f.severity}, ${f.evidence_strength}] ${f.description} — area: ${f.suspected_rule_area} — ${playCount} plays`;
-}
-
-/** Full digest with findings. */
+/**
+ * Parent message for a full run. Findings themselves are posted as
+ * thread replies by `postFindingReplies`, so the parent stays
+ * lightweight: header, summary, baseline. Resolution happens via
+ * :white_check_mark:/:x: reactions on the thread replies; the CLI
+ * `--resolve` path remains available as a manual fallback but isn't
+ * advertised inline.
+ */
 export function buildDigest(input: DigestInput): string {
   const baselineText = renderBaselineForSlack(input.baseline);
-  const findingLines = input.findings.map(formatFindingLine);
   const summary =
     `Summary: ${input.baseline.totalPlays} plays · ${input.baseline.playsWithVotes} with votes · ` +
     `${input.baseline.flaggedCount} flagged · ${formatHitRate(input.hitRate)}`;
@@ -95,11 +99,6 @@ export function buildDigest(input: DigestInput): string {
     summary,
     "",
     baselineText,
-    "",
-    `Findings (${input.findings.length}):`,
-    ...findingLines,
-    "",
-    `Resolve with: bun run weekly-review --resolve ${input.runId} {finding_id} {confirmed|rejected}`,
   ].join("\n");
 }
 

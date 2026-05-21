@@ -77,33 +77,40 @@ describe("byMinStrength", () => {
 });
 
 describe("buildDigest", () => {
-  test("includes header, summary, baseline, findings list, and resolve hint", () => {
+  test("includes header, summary, and baseline", () => {
     const message = buildDigest({
       window: WINDOW,
       baseline: EMPTY_BASELINE,
       findings: [finding()],
       hitRate: HIT_RATE_RICH,
-      runId: 42,
     });
     expect(message).toContain("Weekly classification review");
     expect(message).toContain("Summary:");
     expect(message).toContain("Baseline:");
-    expect(message).toContain("Findings (1)");
-    expect(message).toContain("ranking.ts:target_base_scores");
-    expect(message).toContain("--resolve 42");
   });
 
-  test("renders long descriptions in full (no truncation)", () => {
-    const long = "a".repeat(400);
+  test("does not inline findings (they are posted as thread replies)", () => {
     const message = buildDigest({
       window: WINDOW,
       baseline: EMPTY_BASELINE,
-      findings: [finding({ description: long })],
+      findings: [
+        finding({ description: "FINDING_DESCRIPTION_SENTINEL" }),
+      ],
       hitRate: HIT_RATE_RICH,
-      runId: 1,
     });
-    expect(message).toContain(long);
-    expect(message).not.toContain("…");
+    expect(message).not.toContain("FINDING_DESCRIPTION_SENTINEL");
+    expect(message).not.toContain("ranking.ts:target_base_scores");
+    expect(message).not.toMatch(/Findings \(\d+\)/);
+  });
+
+  test("does not advertise the --resolve CLI hint", () => {
+    const message = buildDigest({
+      window: WINDOW,
+      baseline: EMPTY_BASELINE,
+      findings: [finding()],
+      hitRate: HIT_RATE_RICH,
+    });
+    expect(message).not.toContain("--resolve");
   });
 
   test("hit-rate footer says insufficient data when fewer than 5 resolved", () => {
@@ -112,7 +119,6 @@ describe("buildDigest", () => {
       baseline: EMPTY_BASELINE,
       findings: [finding()],
       hitRate: HIT_RATE_INSUFFICIENT,
-      runId: 1,
     });
     expect(message).toContain("insufficient data");
   });
