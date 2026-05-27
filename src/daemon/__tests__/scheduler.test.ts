@@ -28,6 +28,7 @@ function makeTestConfig(): Config {
     port: 3000,
     anthropicApiKey: undefined,
     agentModel: "claude-sonnet-4-6",
+    rematchAgentModel: "claude-sonnet-4-6",
     agentHistoryWeeks: 8,
     operatorUserId: undefined,
   };

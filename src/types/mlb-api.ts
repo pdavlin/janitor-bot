@@ -238,6 +238,12 @@ export interface Playback {
 }
 
 export interface HighlightItem {
+  /** Stable slug-style id, e.g. "ronald-acuna-jr-rbi-single-x8859". */
+  id?: string;
+  /** Same value as `id` in current responses; kept distinct in case MLB diverges. */
+  slug?: string;
+  /** Opaque media-system id, e.g. "abc123-def456". */
+  mediaPlaybackId?: string;
   title: string;
   description: string;
   keywordsAll?: Keyword[];

@@ -112,7 +112,7 @@ export interface AgentClient {
   }>;
 }
 
-function defaultClient(apiKey: string): AgentClient {
+export function defaultClient(apiKey: string): AgentClient {
   const sdk = new Anthropic({ apiKey });
   return {
     async create(input) {
