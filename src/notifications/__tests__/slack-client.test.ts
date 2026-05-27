@@ -304,7 +304,7 @@ describe("postThreadReply", () => {
 });
 
 describe("seedVoteReactions", () => {
-  test("calls reactions.add for both fire and wastebasket in order", async () => {
+  test("calls reactions.add for fire, wastebasket, and repeat in order", async () => {
     const calls: { url: string; body: Record<string, unknown> }[] = [];
     mockFetch((input, init) => {
       calls.push({
@@ -323,7 +323,7 @@ describe("seedVoteReactions", () => {
       makeSilentLogger(),
     );
 
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(calls[0].url).toBe("https://slack.com/api/reactions.add");
     expect(calls[0].body).toEqual({
       channel: "C1",
@@ -334,6 +334,11 @@ describe("seedVoteReactions", () => {
       channel: "C1",
       timestamp: "1234.5678",
       name: "wastebasket",
+    });
+    expect(calls[2].body).toEqual({
+      channel: "C1",
+      timestamp: "1234.5678",
+      name: "repeat",
     });
   });
 
@@ -362,7 +367,7 @@ describe("seedVoteReactions", () => {
       logger,
     );
 
-    expect(callCount).toBe(2);
+    expect(callCount).toBe(3);
     expect(logger.warn).toHaveBeenCalled();
   });
 
@@ -544,7 +549,8 @@ describe("sendGameNotifications (bot-token mode)", () => {
         JSON.stringify({ ok: true, channel: "C1", ts: "play.1" }),
         { status: 200 },
       ),
-      // Two reactions.add slots for play 1 (any ok response is fine)
+      // Three reactions.add slots for play 1 (any ok response is fine)
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(
@@ -553,10 +559,12 @@ describe("sendGameNotifications (bot-token mode)", () => {
       ),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(
         JSON.stringify({ ok: true, channel: "C1", ts: "play.3" }),
         { status: 200 },
       ),
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
     ]);
@@ -585,8 +593,8 @@ describe("sendGameNotifications (bot-token mode)", () => {
       "play.3",
     ]);
 
-    // 1 header + 3 plays + (2 reactions x 3 plays) = 10 calls
-    expect(recorder.calls).toHaveLength(10);
+    // 1 header + 3 plays + (3 reactions x 3 plays) = 13 calls
+    expect(recorder.calls).toHaveLength(13);
 
     const postMessageCalls = recorder.calls.filter((c) =>
       c.url.endsWith("/chat.postMessage"),
@@ -595,7 +603,7 @@ describe("sendGameNotifications (bot-token mode)", () => {
       c.url.endsWith("/reactions.add"),
     );
     expect(postMessageCalls).toHaveLength(4);
-    expect(reactionCalls).toHaveLength(6);
+    expect(reactionCalls).toHaveLength(9);
 
     // Header has no thread_ts; the three replies do.
     expect(postMessageCalls[0].body?.thread_ts).toBeUndefined();
@@ -606,7 +614,7 @@ describe("sendGameNotifications (bot-token mode)", () => {
       });
     }
 
-    // Each play reply gets seeded with :fire: then :wastebasket: in order.
+    // Each play reply gets seeded with :fire:, :wastebasket:, then :repeat:.
     for (const playTs of ["play.1", "play.2", "play.3"]) {
       const seeds = reactionCalls.filter(
         (c) => (c.body as { timestamp?: string }).timestamp === playTs,
@@ -614,6 +622,7 @@ describe("sendGameNotifications (bot-token mode)", () => {
       expect(seeds.map((c) => (c.body as { name: string }).name)).toEqual([
         "fire",
         "wastebasket",
+        "repeat",
       ]);
     }
   });

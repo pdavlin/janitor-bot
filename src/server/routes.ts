@@ -30,6 +30,7 @@ import {
   isDuplicateEvent,
   dispatchEvent,
   type SlackEventEnvelope,
+  type RematchDispatchConfig,
 } from "../notifications/slack-events";
 import type { SlackClientConfig } from "../notifications/slack-client";
 
@@ -45,6 +46,8 @@ export interface ServerDeps {
   slackSigningSecret?: string;
   /** Slack client config used by the dispatcher to call users.info. */
   slackConfig?: SlackClientConfig;
+  /** Re-match (:repeat:) reaction handler config. Omit to disable. */
+  rematch?: RematchDispatchConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +229,7 @@ interface HandlerContext {
   logger: Logger;
   slackSigningSecret?: string;
   slackConfig?: SlackClientConfig;
+  rematch?: RematchDispatchConfig;
 }
 
 /**
@@ -342,6 +346,7 @@ async function handleSlackEvents(
       db: ctx.db,
       logger: ctx.logger,
       slackConfig: ctx.slackConfig,
+      rematch: ctx.rematch,
     };
     queueMicrotask(() => {
       dispatchEvent(envelope, dispatchCtx).catch((err) => {
@@ -383,6 +388,7 @@ export function startServer(deps: ServerDeps): HttpServer {
     getSchedulerStatus,
     slackSigningSecret,
     slackConfig,
+    rematch,
   } = deps;
 
   const ctx: HandlerContext = {
@@ -392,6 +398,7 @@ export function startServer(deps: ServerDeps): HttpServer {
     logger,
     slackSigningSecret,
     slackConfig,
+    rematch,
   };
 
   const server = Bun.serve({

@@ -63,6 +63,11 @@ async function main(): Promise<void> {
       channelId: config.slackChannelId,
       webhookUrl: config.slackWebhookUrl,
     },
+    rematch: {
+      enabled: config.rematchAgentEnabled,
+      apiKey: config.anthropicApiKey,
+      model: config.rematchAgentModel,
+    },
   });
 
   logger.info("http server started", { port: config.port });
