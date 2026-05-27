@@ -109,7 +109,7 @@ function isDescriptionMatch(
  * @param playbacks - Array of playback options from a highlight item
  * @returns The best available URL, or null if no playbacks exist
  */
-function selectPlaybackUrl(playbacks: Playback[] | undefined): string | null {
+export function selectPlaybackUrl(playbacks: Playback[] | undefined): string | null {
   if (!playbacks?.length) return null;
 
   const mp4Avc = playbacks.find((p) => p.name === "mp4Avc");

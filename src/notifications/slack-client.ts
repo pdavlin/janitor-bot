@@ -202,6 +202,32 @@ export async function updateMessage(
 }
 
 /**
+ * Edits a posted play reply in place. Re-renders the entire blocks payload
+ * — same shape as updateMessage, kept as a named helper so the re-match
+ * orchestrator's intent is obvious at the call site. Returns true on Slack
+ * ack, false on auth or API failure (logged inside callSlackApi).
+ */
+export async function editPlayMessage(
+  config: SlackClientConfig,
+  channel: string,
+  ts: string,
+  payload: SlackPayload,
+  logger: Logger,
+): Promise<boolean> {
+  if (!config.botToken) {
+    logger.debug("editPlayMessage skipped: no bot token");
+    return false;
+  }
+  const result = await callSlackApi<{ ok: true }>(
+    "chat.update",
+    { channel, ts, blocks: payload.blocks },
+    config.botToken,
+    logger,
+  );
+  return result !== null;
+}
+
+/**
  * Posts a reply in the thread of a previously posted message.
  *
  * Used by the backfill notifier to announce "video now available" without
@@ -290,7 +316,7 @@ export async function postThreadTextWithTs(
  * reaction_added events from the bot's own user_id that are skipped during
  * vote counting.
  */
-const SEED_REACTIONS: readonly string[] = ["fire", "wastebasket"];
+const SEED_REACTIONS: readonly string[] = ["fire", "wastebasket", "repeat"];
 
 /**
  * Seeds the bot's own :fire: and :wastebasket: reactions on a posted message

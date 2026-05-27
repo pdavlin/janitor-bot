@@ -27,6 +27,12 @@ export interface Config {
   agentModel: string;
   /** Anthropic model identifier used by the re-match agent. */
   rematchAgentModel: string;
+  /**
+   * Feature flag for the :repeat: re-match flow. When false, the orchestrator
+   * short-circuits at the boundary; reaction events still arrive but no
+   * agent call, no DB write, no Slack edit.
+   */
+  rematchAgentEnabled: boolean;
   /** Past-findings lookback (in weeks) used by the prompt builder. */
   agentHistoryWeeks: number;
   /**
@@ -158,7 +164,18 @@ export function loadConfig(): Config {
       process.env.REMATCH_AGENT_MODEL ??
       process.env.AGENT_MODEL ??
       "claude-sonnet-4-6",
+    rematchAgentEnabled: parseBoolFlag(process.env.REMATCH_AGENT_ENABLED, false),
     agentHistoryWeeks,
     operatorUserId,
   };
+}
+
+function parseBoolFlag(raw: string | undefined, fallback: boolean): boolean {
+  if (raw === undefined) return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1") return true;
+  if (normalized === "false" || normalized === "0" || normalized === "") {
+    return false;
+  }
+  return fallback;
 }

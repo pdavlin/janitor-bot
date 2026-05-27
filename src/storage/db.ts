@@ -259,6 +259,21 @@ CREATE TABLE IF NOT EXISTS finding_resolution_events (
 );
 `;
 
+const CREATE_PLAY_REMATCH_EVENTS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS play_rematch_events (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  game_pk          INTEGER NOT NULL,
+  play_index       INTEGER NOT NULL,
+  user_id          TEXT    NOT NULL,
+  prior_video_url  TEXT,
+  new_video_url    TEXT,
+  decision         TEXT    NOT NULL CHECK (decision IN ('swapped','agreed','no_match','deduped')),
+  agent_reason     TEXT,
+  event_ts         TEXT    NOT NULL,
+  received_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+`;
+
 const INSERT_PLAY_SQL = `
 INSERT INTO plays (
   game_pk, play_index, date, fielder_id, fielder_name, fielder_position,
@@ -376,6 +391,11 @@ export function createDatabase(dbPath: string): Database {
   db.run(CREATE_FINDING_RESOLUTION_EVENTS_TABLE_SQL);
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_finding_resolution_events_finding ON finding_resolution_events(finding_id, direction, user_id);",
+  );
+
+  db.run(CREATE_PLAY_REMATCH_EVENTS_TABLE_SQL);
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_play_rematch_events_play ON play_rematch_events(game_pk, play_index, id DESC);",
   );
 
   return db;

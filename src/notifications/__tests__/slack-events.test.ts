@@ -29,6 +29,7 @@ import {
 } from "../slack-events";
 import { clearUserCache } from "../slack-user-cache";
 import type { Logger } from "../../logger";
+import type { RematchPlayDeps } from "../play-rematch-handler";
 
 const SIGNING_SECRET = "test-signing-secret";
 
@@ -415,6 +416,104 @@ describe("dispatchEvent", () => {
     );
 
     expect(resolutionCount()).toBe(0);
+  });
+
+  test(":repeat: reaction invokes the re-match orchestrator with play lookup", async () => {
+    recordPlayMessage(db, 7000, 3, "C1", "100.001", "99.000");
+
+    const rematchVideo = mock(async () => ({
+      decision: "agreed" as const,
+      reason: "ok",
+    }));
+    const fetchGameVideos = mock(async () => [
+      {
+        id: "vid-1",
+        title: "T",
+        description: "D",
+        playbacks: [
+          { name: "mp4Avc", url: "https://x/y.mp4", width: "1", height: "1" },
+        ],
+      },
+    ]);
+
+    // Insert a play row so the handler can read description / video_url.
+    db.prepare(
+      `INSERT INTO plays (game_pk, play_index, date, fielder_id, fielder_name,
+         fielder_position, runner_id, runner_name, target_base, batter_name,
+         inning, half_inning, away_score, home_score, away_team, home_team,
+         description, credit_chain, tier, outs, runners_on, is_overturned)
+       VALUES (7000, 3, '2026-05-27', 1, 'F', 'RF', 2, 'R', '3B', 'B',
+         7, 'top', 1, 2, 'LAD', 'ATL', 'desc', 'RF->3B', 'high', 1, '1st', 0);`,
+    ).run();
+
+    const dispatchCtx = {
+      db,
+      logger: silentLogger(),
+      slackConfig: { botToken: "xoxb-test" },
+      rematch: {
+        enabled: true,
+        apiKey: "test-key",
+        model: "claude-sonnet-4-6",
+      },
+      rematchDeps: {
+        rematchVideo: rematchVideo as unknown as RematchPlayDeps["rematchVideo"],
+        fetchGameVideos: fetchGameVideos as unknown as RematchPlayDeps["fetchGameVideos"],
+      },
+    };
+    await dispatchEvent(makeEnvelope({ reaction: "repeat" }), dispatchCtx);
+
+    expect(rematchVideo).toHaveBeenCalledTimes(1);
+    const evtRow = db
+      .prepare("SELECT decision, user_id FROM play_rematch_events;")
+      .get() as { decision: string; user_id: string };
+    expect(evtRow).toEqual({ decision: "agreed", user_id: "U123" });
+  });
+
+  test(":repeat: from a bot user is ignored (no agent call, no event row)", async () => {
+    recordPlayMessage(db, 7000, 3, "C1", "100.001", "99.000");
+    usersInfoResponse = {
+      is_bot: true,
+      is_restricted: false,
+      is_ultra_restricted: false,
+    };
+    const rematchVideo = mock(async () => ({ decision: "agreed" as const }));
+    const fetchGameVideos = mock(async () => []);
+
+    const dispatchCtx = {
+      db,
+      logger: silentLogger(),
+      slackConfig: { botToken: "xoxb-test" },
+      rematch: {
+        enabled: true,
+        apiKey: "test-key",
+        model: "claude-sonnet-4-6",
+      },
+      rematchDeps: {
+        rematchVideo: rematchVideo as unknown as RematchPlayDeps["rematchVideo"],
+        fetchGameVideos: fetchGameVideos as unknown as RematchPlayDeps["fetchGameVideos"],
+      },
+    };
+    await dispatchEvent(makeEnvelope({ reaction: "repeat" }), dispatchCtx);
+
+    expect(rematchVideo).not.toHaveBeenCalled();
+    expect(fetchGameVideos).not.toHaveBeenCalled();
+    const count = (
+      db.prepare("SELECT COUNT(*) AS c FROM play_rematch_events;").get() as {
+        c: number;
+      }
+    ).c;
+    expect(count).toBe(0);
+  });
+
+  test(":repeat: with rematch config absent is a no-op", async () => {
+    recordPlayMessage(db, 7000, 3, "C1", "100.001", "99.000");
+    await dispatchEvent(makeEnvelope({ reaction: "repeat" }), ctx());
+    const count = (
+      db.prepare("SELECT COUNT(*) AS c FROM play_rematch_events;").get() as {
+        c: number;
+      }
+    ).c;
+    expect(count).toBe(0);
   });
 
   test("reaction_removed on a finding ts records action=removed", async () => {

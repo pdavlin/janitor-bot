@@ -31,6 +31,7 @@ import { getUserInfo, isVotingEligible } from "./slack-user-cache";
 import type { SlackClientConfig } from "./slack-client";
 import { attributeToPlay, parseTags } from "./comment-tags";
 import { insertPlayTag } from "./play-tags-store";
+import { rematchPlay, type RematchPlayDeps } from "./play-rematch-handler";
 
 /** Slack rejects timestamps drifting more than five minutes from now. */
 const FIVE_MINUTES_S = 60 * 5;
@@ -144,10 +145,25 @@ export interface SlackEventEnvelope {
 // Dispatcher
 // ---------------------------------------------------------------------------
 
+/**
+ * Configuration for the re-match (:repeat:) reaction handler. Bundled
+ * separately so dispatcher callers that don't care about the flow can
+ * omit the field; when absent the handler is treated as disabled.
+ */
+export interface RematchDispatchConfig {
+  enabled: boolean;
+  apiKey: string | undefined;
+  model: string;
+}
+
 export interface DispatchContext {
   db: Database;
   logger: Logger;
   slackConfig: SlackClientConfig;
+  /** When omitted, the :repeat: reaction is silently ignored. */
+  rematch?: RematchDispatchConfig;
+  /** Test seam: injected dependencies for the re-match orchestrator. */
+  rematchDeps?: RematchPlayDeps;
 }
 
 /**
@@ -186,6 +202,16 @@ async function handleReactionEvent(
   >,
   ctx: DispatchContext,
 ): Promise<void> {
+  if (event.reaction === "repeat") {
+    // reaction_removed for :repeat: has no resting state to clean up — the
+    // re-match is a one-shot side effect, not a vote tally — so removals
+    // are dropped silently.
+    if (event.type === "reaction_added") {
+      await handleRematchReaction(event, ctx);
+    }
+    return;
+  }
+
   const playDirection = reactionToDirection(event.reaction);
   if (playDirection) {
     await handlePlayVoteReaction(event, playDirection, ctx);
@@ -197,6 +223,41 @@ async function handleReactionEvent(
     await handleFindingResolutionReaction(event, resolutionDirection, ctx);
     return;
   }
+}
+
+async function handleRematchReaction(
+  event: Extract<SlackEvent, { type: "reaction_added" }>,
+  ctx: DispatchContext,
+): Promise<void> {
+  if (!ctx.rematch || !ctx.rematch.enabled) return;
+
+  const lookup = lookupPlayMessageByTs(
+    ctx.db,
+    event.item.channel,
+    event.item.ts,
+  );
+  if (!lookup) return;
+
+  const userInfo = await getUserInfo(ctx.slackConfig, event.user, ctx.logger);
+  if (!isVotingEligible(userInfo)) return;
+
+  await rematchPlay(
+    {
+      db: ctx.db,
+      slackConfig: ctx.slackConfig,
+      logger: ctx.logger,
+      channel: event.item.channel,
+      ts: event.item.ts,
+      gamePk: lookup.gamePk,
+      playIndex: lookup.playIndex,
+      userId: event.user,
+      eventTs: event.event_ts,
+      enabled: ctx.rematch.enabled,
+      apiKey: ctx.rematch.apiKey,
+      model: ctx.rematch.model,
+    },
+    ctx.rematchDeps ?? {},
+  );
 }
 
 async function handlePlayVoteReaction(
