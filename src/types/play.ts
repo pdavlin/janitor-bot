@@ -70,6 +70,10 @@ export interface DetectedPlay {
   videoUrl: string | null;
   /** Populated later by video-match module. */
   videoTitle: string | null;
+  /** Throw velocity in mph from Savant arm-strength data, when available. */
+  throwVelocity: number | null;
+  /** Outcome of the most recent Savant arm-velocity fetch attempt. */
+  throwVelocityStatus: string | null;
 }
 
 /**

@@ -45,6 +45,8 @@ function makeMockPlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
     fetchStatus: null,
     videoUrl: null,
     videoTitle: null,
+    throwVelocity: null,
+    throwVelocityStatus: null,
     ...overrides,
   };
 }
@@ -57,6 +59,23 @@ function makeStoredPlay(overrides: Partial<StoredPlay> = {}): StoredPlay {
     ...overrides,
   };
 }
+
+describe("throw velocity annotation", () => {
+  test("renders the velocity line when throwVelocity is positive", () => {
+    const result = buildGameMessage([makeMockPlay({ throwVelocity: 96.4 })]);
+    expect(JSON.stringify(result.blocks)).toContain("Throw: 96 mph (Statcast)");
+  });
+
+  test("omits the velocity line when throwVelocity is null (untracked)", () => {
+    const result = buildGameMessage([makeMockPlay({ throwVelocity: null })]);
+    expect(JSON.stringify(result.blocks)).not.toContain("Throw:");
+  });
+
+  test("omits the velocity line for a non-positive value (no '-1 mph' leak)", () => {
+    const result = buildGameMessage([makeMockPlay({ throwVelocity: -1 })]);
+    expect(JSON.stringify(result.blocks)).not.toContain("Throw:");
+  });
+});
 
 describe("buildGameMessage", () => {
   test("empty plays returns empty blocks", () => {

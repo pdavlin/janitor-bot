@@ -125,6 +125,8 @@ function seedPlay(db: Database, overrides: Partial<DetectedPlay> = {}): number {
     fetchStatus: null,
     videoUrl: null,
     videoTitle: null,
+    throwVelocity: null,
+    throwVelocityStatus: null,
     ...overrides,
   };
   insertPlay(db, play);

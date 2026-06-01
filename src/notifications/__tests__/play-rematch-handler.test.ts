@@ -74,6 +74,8 @@ function basePlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
     fetchStatus: null,
     videoUrl: "https://video.example.com/old.mp4",
     videoTitle: "Old Title",
+    throwVelocity: null,
+    throwVelocityStatus: null,
     ...overrides,
   };
 }

@@ -449,6 +449,8 @@ function readPlayFull(
     videoTitle: (row.video_title as string | null) ?? null,
     playId: (row.play_id as string | null) ?? null,
     fetchStatus: (row.fetch_status as StoredPlay["fetchStatus"]) ?? null,
+    throwVelocity: (row.throw_velocity as number | null) ?? null,
+    throwVelocityStatus: (row.throw_velocity_status as string | null) ?? null,
     createdAt: row.created_at as string,
   };
 }

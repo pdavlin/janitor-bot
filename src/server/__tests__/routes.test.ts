@@ -63,6 +63,8 @@ function makeMockPlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
     fetchStatus: null,
     videoUrl: null,
     videoTitle: null,
+    throwVelocity: null,
+    throwVelocityStatus: null,
     ...overrides,
   };
 }

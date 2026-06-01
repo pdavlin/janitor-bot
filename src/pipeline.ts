@@ -16,6 +16,7 @@ import { detectOutfieldAssists } from "./detection/detect";
 import type { DetectedPlay } from "./types/play";
 import { matchVideoToPlay } from "./detection/video-match";
 import { extractPlayId, fetchSavantVideo } from "./detection/savant-video";
+import { resolveThrowVelocity } from "./detection/arm-velocity";
 import { calculateTier } from "./detection/ranking";
 import type { Logger } from "./logger";
 
@@ -91,6 +92,14 @@ export async function processGame(
           status: result.status,
         });
       }
+
+      // Resolve throw velocity from Savant arm-strength data
+      if (playId) {
+        const year = Number(officialDate.slice(0, 4));
+        const v = await resolveThrowVelocity(play.fielderId, year, playId, logger);
+        play.throwVelocity = v.status === "matched" ? v.velocityMph : null;
+        play.throwVelocityStatus = v.status;
+      }
     })
   );
 
@@ -126,6 +135,7 @@ export async function processGame(
       creditChain: play.creditChain,
       hasVideo: play.videoUrl !== null,
       isOverturned: play.isOverturned,
+      throwVelocity: play.throwVelocity,
     });
   }
 
