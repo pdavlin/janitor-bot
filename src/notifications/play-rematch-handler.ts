@@ -318,7 +318,11 @@ export async function handleAngleTrigger(
   const uploadedFeeds: FeedType[] = [];
   for (const angle of angles) {
     const angleLabel =
-      angle.feedType === "home" ? "Home broadcast angle" : "Away broadcast angle";
+      angle.feedType === "home"
+        ? "Home broadcast angle"
+        : angle.feedType === "away"
+          ? "Away broadcast angle"
+          : "High home angle";
     const uploadResult = await uploadFile(
       args.slackConfig,
       args.channel,
