@@ -69,21 +69,20 @@ function baseArgs(
       gamePk: 7000,
       playIndex: 3,
       userId: "U123",
-      eventTs: `${Math.floor(Date.now() / 1000)}.000000`, // recent Slack ts
+      eventTs: `${Math.floor(Date.now() / 1000)}.000000`,
       enabled: true,
-      windowHours: 24,
     },
     deps: { resolveAngle },
   };
 }
 
-describe("handleAngleTrigger window + dedup", () => {
+describe("handleAngleTrigger dedup + no time gate", () => {
   let db: Database;
   beforeEach(() => {
     db = createDatabase(":memory:");
   });
 
-  test("recent play within window: resolver is called", async () => {
+  test("enabled play: resolver is called", async () => {
     seedPlay(db);
     let calls = 0;
     const resolveAngle = async () => {
@@ -96,7 +95,7 @@ describe("handleAngleTrigger window + dedup", () => {
     db.close();
   });
 
-  test("old play outside window: resolver is NOT called (regression guard)", async () => {
+  test("an old play STILL resolves — there is no age/window gate", async () => {
     seedPlay(db);
     db.run("UPDATE plays SET created_at = '2020-01-01 00:00:00' WHERE game_pk = 7000;");
     let calls = 0;
@@ -106,7 +105,7 @@ describe("handleAngleTrigger window + dedup", () => {
     };
     const { args, deps } = baseArgs(db, resolveAngle);
     await handleAngleTrigger(args, deps);
-    expect(calls).toBe(0); // pre-fix the NaN age check let this through
+    expect(calls).toBe(1); // age is irrelevant now; the gate was removed
     db.close();
   });
 

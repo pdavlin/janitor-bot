@@ -158,7 +158,6 @@ export interface RematchDispatchConfig {
 
 export interface AngleDispatchConfig {
   enabled: boolean;
-  windowHours: number;
 }
 
 export interface DispatchContext {
@@ -307,7 +306,6 @@ async function handleAngleReaction(
       userId: event.user,
       eventTs: event.event_ts,
       enabled: ctx.angle.enabled,
-      windowHours: ctx.angle.windowHours,
     },
     ctx.angleDeps ?? {},
   );

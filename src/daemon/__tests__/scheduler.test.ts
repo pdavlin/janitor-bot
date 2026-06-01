@@ -31,7 +31,6 @@ function makeTestConfig(): Config {
     rematchAgentModel: "claude-sonnet-4-6",
     rematchAgentEnabled: false,
     angleTriggerEnabled: true,
-    angleTriggerWindowHours: 24,
     agentHistoryWeeks: 8,
     operatorUserId: undefined,
   };

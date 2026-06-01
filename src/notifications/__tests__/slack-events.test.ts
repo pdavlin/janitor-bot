@@ -285,7 +285,7 @@ describe("dispatchEvent", () => {
     let angleCalled = 0;
     const angleCtx = {
       ...ctx(),
-      angle: { enabled: true, windowHours: 24 },
+      angle: { enabled: true },
       angleDeps: {
         resolveAngle: async () => {
           angleCalled++;
@@ -307,7 +307,7 @@ describe("dispatchEvent", () => {
     let angleCalled = 0;
     const angleCtx = {
       ...ctx(),
-      angle: { enabled: true, windowHours: 24 },
+      angle: { enabled: true },
       angleDeps: {
         resolveAngle: async () => {
           angleCalled++;
