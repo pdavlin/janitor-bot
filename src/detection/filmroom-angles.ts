@@ -1,9 +1,9 @@
 /**
  * Film Room alternate-angle fetcher for outfield assist plays.
  *
- * Given a (gamePk, playId), probes the Film Room CDN for alternate camera
- * angles (center field, then high home). Returns the first available angle's
- * URL and downloaded bytes so the caller can upload the clip to Slack.
+ * Given a (gamePk, playId), probes the Film Room CDN for the broadcast
+ * feeds (home, then away) and returns the first available one's URL and
+ * downloaded bytes so the caller can upload the clip to Slack.
  *
  * The CDN URL pattern is:
  *   https://fastball-clips.mlb.com/{gamePk}/{feedType}/{playId}.mp4
@@ -12,10 +12,16 @@
  * the CDN 302-redirects to a Film Room search page instead of serving the
  * video.
  *
- * Coverage measured on a real 2026 game: cf 14/14 plays, highhome 4/4.
+ * We use the broadcast feeds (home/away), NOT the fixed Statcast cameras:
+ * cf/highhome are anchored on the pitcher/plate and only show the pitch and
+ * contact, never the outfielder's throw. The broadcast feed follows the
+ * ball into the outfield, the throw, and the tag.
  */
 
 import type { Logger } from "../logger";
+
+/** Broadcast feed types, in preference order. */
+export type FeedType = "home" | "away";
 
 /**
  * Discriminated outcome of an alternate-angle fetch attempt.
@@ -25,12 +31,12 @@ import type { Logger } from "../logger";
  * in no post to the thread.
  */
 export type AngleResult =
-  | { status: "found"; feedType: "cf" | "highhome"; url: string; bytes: ArrayBuffer }
+  | { status: "found"; feedType: FeedType; url: string; bytes: ArrayBuffer }
   | { status: "no_alternate" }
   | { status: "error"; error: string };
 
-/** Feed types in preference order. Center field most reliably frames an outfield throw. */
-const ANGLE_PREFERENCE: readonly ("cf" | "highhome")[] = ["cf", "highhome"] as const;
+/** Broadcast feeds in preference order; they follow the ball and show the throw. */
+const ANGLE_PREFERENCE: readonly FeedType[] = ["home", "away"] as const;
 
 const REFERER = "https://www.mlb.com/video";
 
@@ -43,24 +49,24 @@ const FETCH_TIMEOUT_MS = 15000;
  * Builds the Film Room CDN URL for a specific feed type and play.
  *
  * @param gamePk - MLB game identifier.
- * @param feedType - Camera angle: "cf" or "highhome".
+ * @param feedType - Broadcast feed: "home" or "away".
  * @param playId - Savant play UUID (same as `extractPlayId` produces).
  * @returns The CDN URL string.
  */
 export function buildAngleUrl(
   gamePk: number,
-  feedType: "cf" | "highhome",
+  feedType: FeedType,
   playId: string,
 ): string {
   return `https://fastball-clips.mlb.com/${gamePk}/${feedType}/${playId}.mp4`;
 }
 
 /**
- * Probes the Film Room CDN for alternate camera angles and returns the
- * first available one with its downloaded bytes.
+ * Probes the Film Room CDN for the broadcast feeds and returns the first
+ * available one with its downloaded bytes.
  *
- * Tries `cf` first, then `highhome`. On a 200 response, downloads the
- * full mp4 (3-9 MB typically). On 400/404, tries the next feed type.
+ * Tries `home` first, then `away`. On a 200 response, downloads the full
+ * mp4 (6-9 MB typically). On 400/404, tries the next feed type.
  *
  * @param gamePk - MLB game identifier.
  * @param playId - Savant play UUID.

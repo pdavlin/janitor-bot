@@ -299,7 +299,7 @@ export async function handleAngleTrigger(
   if (result.status === "found") {
     // Upload the angle to the thread.
     const angleLabel =
-      result.feedType === "cf" ? "Center field angle" : "High home angle";
+      result.feedType === "home" ? "Home broadcast angle" : "Away broadcast angle";
     const filename = `${result.feedType}-angle.mp4`;
 
     const uploadResult = await uploadFile(

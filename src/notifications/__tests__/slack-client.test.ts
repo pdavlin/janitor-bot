@@ -785,12 +785,12 @@ describe("uploadFile (external upload flow)", () => {
       "C1",
       "100.001",
       bytes(),
-      "cf-angle.mp4",
-      "Center field angle",
+      "home-angle.mp4",
+      "Home broadcast angle",
       makeSilentLogger(),
     );
 
-    expect(result).toMatchObject({ ok: true, file: { id: "F1", name: "cf-angle.mp4" } });
+    expect(result).toMatchObject({ ok: true, file: { id: "F1", name: "home-angle.mp4" } });
     expect(calls[0]).toContain("/files.getUploadURLExternal");
     expect(calls[1]).toBe("https://up.example/u1");
     expect(calls[2]).toContain("/files.completeUploadExternal");
@@ -809,8 +809,8 @@ describe("uploadFile (external upload flow)", () => {
       "C1",
       "100.001",
       bytes(),
-      "cf-angle.mp4",
-      "Center field angle",
+      "home-angle.mp4",
+      "Home broadcast angle",
       makeSilentLogger(),
     );
 
@@ -824,8 +824,8 @@ describe("uploadFile (external upload flow)", () => {
       "C1",
       "100.001",
       bytes(),
-      "cf-angle.mp4",
-      "Center field angle",
+      "home-angle.mp4",
+      "Home broadcast angle",
       makeSilentLogger(),
     );
     expect(result).toBeNull();
