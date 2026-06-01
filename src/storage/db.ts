@@ -94,6 +94,8 @@ interface PlayRow {
   video_title: string | null;
   play_id: string | null;
   fetch_status: FetchStatus | null;
+  throw_velocity: number | null;
+  throw_velocity_status: string | null;
   created_at: string;
 }
 
@@ -128,6 +130,8 @@ CREATE TABLE IF NOT EXISTS plays (
   video_title     TEXT,
   play_id         TEXT,
   fetch_status    TEXT,
+  throw_velocity  REAL,
+  throw_velocity_status TEXT,
   created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
   UNIQUE(game_pk, play_index, runner_id)
 );
@@ -279,22 +283,26 @@ INSERT INTO plays (
   game_pk, play_index, date, fielder_id, fielder_name, fielder_position,
   runner_id, runner_name, target_base, batter_name, inning, half_inning,
   away_score, home_score, away_team, home_team, description, credit_chain,
-  tier, outs, runners_on, is_overturned, video_url, video_title, play_id, fetch_status
+  tier, outs, runners_on, is_overturned, video_url, video_title, play_id, fetch_status,
+  throw_velocity, throw_velocity_status
 ) VALUES (
   $gamePk, $playIndex, $date, $fielderId, $fielderName, $fielderPosition,
   $runnerId, $runnerName, $targetBase, $batterName, $inning, $halfInning,
   $awayScore, $homeScore, $awayTeam, $homeTeam, $description, $creditChain,
-  $tier, $outs, $runnersOn, $isOverturned, $videoUrl, $videoTitle, $playId, $fetchStatus
+  $tier, $outs, $runnersOn, $isOverturned, $videoUrl, $videoTitle, $playId, $fetchStatus,
+  $throwVelocity, $throwVelocityStatus
 )
 ON CONFLICT(game_pk, play_index, runner_id) DO UPDATE SET
-  video_url     = COALESCE(excluded.video_url, plays.video_url),
-  video_title   = COALESCE(excluded.video_title, plays.video_title),
-  tier          = excluded.tier,
-  outs          = excluded.outs,
-  runners_on    = excluded.runners_on,
-  is_overturned = excluded.is_overturned,
-  play_id       = COALESCE(excluded.play_id, plays.play_id),
-  fetch_status  = excluded.fetch_status;
+  video_url      = COALESCE(excluded.video_url, plays.video_url),
+  video_title    = COALESCE(excluded.video_title, plays.video_title),
+  tier           = excluded.tier,
+  outs           = excluded.outs,
+  runners_on     = excluded.runners_on,
+  is_overturned  = excluded.is_overturned,
+  play_id        = COALESCE(excluded.play_id, plays.play_id),
+  fetch_status   = excluded.fetch_status,
+  throw_velocity = COALESCE(excluded.throw_velocity, plays.throw_velocity),
+  throw_velocity_status = COALESCE(excluded.throw_velocity_status, plays.throw_velocity_status);
 `;
 
 // ---------------------------------------------------------------------------
@@ -333,6 +341,12 @@ export function createDatabase(dbPath: string): Database {
   } catch (_) { /* column already exists */ }
   try {
     db.run("ALTER TABLE plays ADD COLUMN is_overturned INTEGER NOT NULL DEFAULT 0;");
+  } catch (_) { /* column already exists */ }
+  try {
+    db.run("ALTER TABLE plays ADD COLUMN throw_velocity REAL;");
+  } catch (_) { /* column already exists */ }
+  try {
+    db.run("ALTER TABLE plays ADD COLUMN throw_velocity_status TEXT;");
   } catch (_) { /* column already exists */ }
 
   db.run(
@@ -438,6 +452,8 @@ export function insertPlay(db: Database, play: DetectedPlay): void {
     $videoTitle: play.videoTitle,
     $playId: play.playId,
     $fetchStatus: play.fetchStatus,
+    $throwVelocity: play.throwVelocity,
+    $throwVelocityStatus: play.throwVelocityStatus,
   });
 }
 
@@ -482,6 +498,8 @@ export function insertPlays(db: Database, plays: DetectedPlay[]): void {
         $videoTitle: play.videoTitle,
         $playId: play.playId,
         $fetchStatus: play.fetchStatus,
+        $throwVelocity: play.throwVelocity,
+        $throwVelocityStatus: play.throwVelocityStatus,
       });
     }
   });
@@ -521,6 +539,8 @@ function rowToStoredPlay(row: PlayRow): StoredPlay {
     videoTitle: row.video_title,
     playId: row.play_id,
     fetchStatus: row.fetch_status,
+    throwVelocity: row.throw_velocity,
+    throwVelocityStatus: row.throw_velocity_status,
     createdAt: row.created_at,
   };
 }

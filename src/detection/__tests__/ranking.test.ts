@@ -143,4 +143,81 @@ describe("calculateTier", () => {
     });
     expect(tier).toBe("medium");
   });
+
+  // -----------------------------------------------------------------------
+  // Throw velocity bonus (FR-1.10: absent velocity contributes 0)
+  // -----------------------------------------------------------------------
+
+  test("absent velocity (undefined) contributes 0: relay to 3B stays medium", () => {
+    const tier = calculateTier({
+      targetBase: "3B",
+      creditChain: "LF -> SS -> 3B",
+      hasVideo: false,
+      isOverturned: false,
+      throwVelocity: undefined,
+    });
+    expect(tier).toBe("medium");
+  });
+
+  test("absent velocity (null) contributes 0: relay to 3B stays medium", () => {
+    const tier = calculateTier({
+      targetBase: "3B",
+      creditChain: "LF -> SS -> 3B",
+      hasVideo: false,
+      isOverturned: false,
+      throwVelocity: null,
+    });
+    expect(tier).toBe("medium");
+  });
+
+  test("low velocity (< 95) contributes 0: relay to 3B stays medium", () => {
+    const tier = calculateTier({
+      targetBase: "3B",
+      creditChain: "LF -> SS -> 3B",
+      hasVideo: false,
+      isOverturned: false,
+      throwVelocity: 88.5,
+    });
+    expect(tier).toBe("medium");
+  });
+
+  test("high velocity (>= 95) adds +1: relay to 3B (3) + velocity(1) = 4 -> medium (no tier change)", () => {
+    const tier = calculateTier({
+      targetBase: "3B",
+      creditChain: "LF -> SS -> 3B",
+      hasVideo: false,
+      isOverturned: false,
+      throwVelocity: 96.2,
+    });
+    expect(tier).toBe("medium");
+  });
+
+  test("high velocity promotes borderline: relay to 2B (1) + video(1) + velocity(1) = 3 -> medium", () => {
+    const tier = calculateTier({
+      targetBase: "2B",
+      creditChain: "CF -> SS -> 2B",
+      hasVideo: true,
+      isOverturned: false,
+      throwVelocity: 97.0,
+    });
+    expect(tier).toBe("medium");
+  });
+
+  test("velocity regression: same inputs without velocity yields original tier", () => {
+    // This is the FR-1.10 invariant: absent velocity must not change the tier.
+    const inputs = {
+      targetBase: "Home" as const,
+      creditChain: "RF -> C",
+      hasVideo: true,
+      isOverturned: false,
+    };
+
+    const withoutVelocity = calculateTier(inputs);
+    const withNullVelocity = calculateTier({ ...inputs, throwVelocity: null });
+    const withUndefinedVelocity = calculateTier({ ...inputs, throwVelocity: undefined });
+
+    expect(withoutVelocity).toBe("high");
+    expect(withNullVelocity).toBe("high");
+    expect(withUndefinedVelocity).toBe("high");
+  });
 });

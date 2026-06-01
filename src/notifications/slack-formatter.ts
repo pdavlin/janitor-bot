@@ -148,12 +148,22 @@ function buildPlayBlocks(play: DetectedPlay | StoredPlay): SlackBlock[] {
     },
   });
 
+  // Throw velocity annotation from Statcast arm-strength data.
+  // Guard > 0 defensively: untracked throws are null, but never render a
+  // non-positive value as a velocity.
+  const velocityLine =
+    play.throwVelocity != null && play.throwVelocity > 0
+      ? `Throw: ${Math.round(play.throwVelocity)} mph (Statcast)`
+      : null;
+
   blocks.push({
     type: "context",
     elements: [
       {
         type: "mrkdwn",
-        text: `${formatInning(play.halfInning, play.inning)} | ${formatSituation(play.outs, play.runnersOn)} | ${play.awayTeam} ${play.awayScore} - ${play.homeTeam} ${play.homeScore}`,
+        text: velocityLine
+          ? `${formatInning(play.halfInning, play.inning)} | ${formatSituation(play.outs, play.runnersOn)} | ${play.awayTeam} ${play.awayScore} - ${play.homeTeam} ${play.homeScore}\n${velocityLine}`
+          : `${formatInning(play.halfInning, play.inning)} | ${formatSituation(play.outs, play.runnersOn)} | ${play.awayTeam} ${play.awayScore} - ${play.homeTeam} ${play.homeScore}`,
       },
     ],
   });

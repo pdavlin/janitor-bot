@@ -61,9 +61,41 @@ function makeMockPlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
     fetchStatus: null,
     videoUrl: null,
     videoTitle: null,
+    throwVelocity: null,
+    throwVelocityStatus: null,
     ...overrides,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Throw velocity persistence
+// ---------------------------------------------------------------------------
+
+describe("throw velocity persistence", () => {
+  test("round-trips throwVelocity and throwVelocityStatus through insert/read", () => {
+    const db = createDatabase(":memory:");
+    insertPlay(
+      db,
+      makeMockPlay({ throwVelocity: 96.4, throwVelocityStatus: "matched" }),
+    );
+    const stored = queryPlays(db)[0]!;
+    expect(stored.throwVelocity).toBe(96.4);
+    expect(stored.throwVelocityStatus).toBe("matched");
+    db.close();
+  });
+
+  test("persists null velocity with a status (untracked throw)", () => {
+    const db = createDatabase(":memory:");
+    insertPlay(
+      db,
+      makeMockPlay({ throwVelocity: null, throwVelocityStatus: "no_match" }),
+    );
+    const stored = queryPlays(db)[0]!;
+    expect(stored.throwVelocity).toBeNull();
+    expect(stored.throwVelocityStatus).toBe("no_match");
+    db.close();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // PlayFilters extensions

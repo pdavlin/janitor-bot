@@ -208,6 +208,8 @@ export function detectOutfieldAssists(
         fetchStatus: null,
         videoUrl: null,
         videoTitle: null,
+        throwVelocity: null,
+        throwVelocityStatus: null,
       });
     }
   }

@@ -38,6 +38,8 @@ function makePlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
     fetchStatus: "success",
     videoUrl: "https://savant.example/clip.mp4",
     videoTitle: "Great throw",
+    throwVelocity: null,
+    throwVelocityStatus: null,
     ...overrides,
   };
 }
