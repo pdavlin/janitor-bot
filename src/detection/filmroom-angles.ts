@@ -23,17 +23,12 @@ import type { Logger } from "../logger";
 /** Broadcast feed types, in preference order. */
 export type FeedType = "home" | "away";
 
-/**
- * Discriminated outcome of an alternate-angle fetch attempt.
- *
- * `no_alternate` (a definite "no angle for this play") is distinct from
- * `error` (transient) so the handler can log them differently; both result
- * in no post to the thread.
- */
-export type AngleResult =
-  | { status: "found"; feedType: FeedType; url: string; bytes: ArrayBuffer }
-  | { status: "no_alternate" }
-  | { status: "error"; error: string };
+/** A successfully fetched broadcast-feed clip. */
+export interface FoundAngle {
+  feedType: FeedType;
+  url: string;
+  bytes: ArrayBuffer;
+}
 
 /** Broadcast feeds in preference order; they follow the ball and show the throw. */
 const ANGLE_PREFERENCE: readonly FeedType[] = ["home", "away"] as const;
@@ -62,22 +57,25 @@ export function buildAngleUrl(
 }
 
 /**
- * Probes the Film Room CDN for the broadcast feeds and returns the first
- * available one with its downloaded bytes.
+ * Probes the Film Room CDN for ALL broadcast feeds (home and away) and
+ * returns every one that is available, each with its downloaded bytes.
  *
- * Tries `home` first, then `away`. On a 200 response, downloads the full
- * mp4 (6-9 MB typically). On 400/404, tries the next feed type.
+ * Both feeds are distinct broadcasts of the same play, so when both exist
+ * the caller posts both. A 400/404/error on one feed is skipped; the others
+ * still return. Empty array = no angle available for this play.
  *
  * @param gamePk - MLB game identifier.
  * @param playId - Savant play UUID.
  * @param logger - Optional logger for diagnostics.
- * @returns Discriminated result: found (with bytes), no_alternate, or error.
+ * @returns Array of found angles (possibly empty); each carries its bytes.
  */
-export async function resolveAlternateAngle(
+export async function resolveAlternateAngles(
   gamePk: number,
   playId: string,
   logger?: Logger,
-): Promise<AngleResult> {
+): Promise<FoundAngle[]> {
+  const found: FoundAngle[] = [];
+
   for (const feedType of ANGLE_PREFERENCE) {
     const url = buildAngleUrl(gamePk, feedType, playId);
 
@@ -99,11 +97,11 @@ export async function resolveAlternateAngle(
           url,
           sizeBytes: bytes.byteLength,
         });
-        return { status: "found", feedType, url, bytes };
+        found.push({ feedType, url, bytes });
+        continue;
       }
 
-      // 400/404 → try next feed type. Other errors are also non-fatal
-      // for this feed type but logged for diagnostics.
+      // 400/404 → this feed isn't available for the play; others may be.
       if (response.status === 400 || response.status === 404) {
         logger?.debug("filmroom angle not available", {
           gamePk,
@@ -114,7 +112,6 @@ export async function resolveAlternateAngle(
         continue;
       }
 
-      // Unexpected non-200 — log and try next.
       logger?.warn("filmroom angle unexpected status", {
         gamePk,
         playId,
@@ -124,8 +121,6 @@ export async function resolveAlternateAngle(
     } catch (err) {
       if (err instanceof DOMException && err.name === "TimeoutError") {
         logger?.warn("filmroom angle timeout", { gamePk, playId, feedType });
-        // Timeout on one feed type is likely to timeout on the other too,
-        // but spec says try each.
         continue;
       }
       logger?.warn("filmroom angle fetch error", {
@@ -138,6 +133,8 @@ export async function resolveAlternateAngle(
     }
   }
 
-  logger?.debug("filmroom no alternate angle available", { gamePk, playId });
-  return { status: "no_alternate" };
+  if (found.length === 0) {
+    logger?.debug("filmroom no alternate angle available", { gamePk, playId });
+  }
+  return found;
 }

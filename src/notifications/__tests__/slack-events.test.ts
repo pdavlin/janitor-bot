@@ -287,9 +287,9 @@ describe("dispatchEvent", () => {
       ...ctx(),
       angle: { enabled: true },
       angleDeps: {
-        resolveAngle: async () => {
+        resolveAngles: async () => {
           angleCalled++;
-          return { status: "no_alternate" as const };
+          return [];
         },
       },
     };
@@ -309,9 +309,9 @@ describe("dispatchEvent", () => {
       ...ctx(),
       angle: { enabled: true },
       angleDeps: {
-        resolveAngle: async () => {
+        resolveAngles: async () => {
           angleCalled++;
-          return { status: "no_alternate" as const };
+          return [];
         },
       },
     };

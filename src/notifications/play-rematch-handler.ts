@@ -39,7 +39,7 @@ import {
   hasAngleTriggerRun,
   type PlayRematchEvent,
 } from "./play-rematch-events-store";
-import { resolveAlternateAngle } from "../detection/filmroom-angles";
+import { resolveAlternateAngles, type FeedType } from "../detection/filmroom-angles";
 
 export interface RematchPlayArgs {
   db: Database;
@@ -86,7 +86,7 @@ export interface AngleTriggerArgs {
 }
 
 export interface AngleTriggerDeps {
-  resolveAngle?: typeof resolveAlternateAngle;
+  resolveAngles?: typeof resolveAlternateAngles;
 }
 
 /** Minimal play shape the orchestrator needs. */
@@ -293,63 +293,65 @@ export async function handleAngleTrigger(
   }
 
   // Resolve alternate angle.
-  const resolveAngle = deps.resolveAngle ?? resolveAlternateAngle;
-  const result = await resolveAngle(args.gamePk, play.playId, args.logger);
+  const resolveAngles = deps.resolveAngles ?? resolveAlternateAngles;
+  const angles = await resolveAngles(args.gamePk, play.playId, args.logger);
 
-  if (result.status === "found") {
-    // Upload the angle to the thread.
-    const angleLabel =
-      result.feedType === "home" ? "Home broadcast angle" : "Away broadcast angle";
-    const filename = `${result.feedType}-angle.mp4`;
-
-    const uploadResult = await uploadFile(
-      args.slackConfig,
-      args.channel,
-      args.ts,
-      result.bytes,
-      filename,
-      angleLabel,
-      args.logger,
-    );
-
+  if (angles.length === 0) {
     insertAngleEvent(args.db, {
       gamePk: args.gamePk,
       playIndex: args.playIndex,
       userId: args.userId,
-      decision: "angle_found",
-      agentReason: uploadResult
-        ? `${result.feedType} angle uploaded` : `${result.feedType} angle resolved but upload failed`,
+      decision: "angle_no_alternate",
+      agentReason: "no alternate angle available",
       eventTs: args.eventTs,
     });
-
-    args.logger.info("angle trigger completed", {
+    args.logger.info("angle trigger no angle", {
       gamePk: args.gamePk,
       playIndex: args.playIndex,
       userId: args.userId,
-      feedType: result.feedType,
-      uploadOk: uploadResult !== null,
     });
     return;
   }
 
-  // no_alternate or error — record outcome and post nothing.
-  const decision = result.status === "no_alternate" ? "angle_no_alternate" : "angle_error";
-  const reason = result.status === "error" ? result.error : "no alternate angle available";
+  // Upload every available feed (home and away are distinct broadcasts).
+  let uploaded = 0;
+  const uploadedFeeds: FeedType[] = [];
+  for (const angle of angles) {
+    const angleLabel =
+      angle.feedType === "home" ? "Home broadcast angle" : "Away broadcast angle";
+    const uploadResult = await uploadFile(
+      args.slackConfig,
+      args.channel,
+      args.ts,
+      angle.bytes,
+      `${angle.feedType}-angle.mp4`,
+      angleLabel,
+      args.logger,
+    );
+    if (uploadResult) {
+      uploaded++;
+      uploadedFeeds.push(angle.feedType);
+    }
+  }
 
   insertAngleEvent(args.db, {
     gamePk: args.gamePk,
     playIndex: args.playIndex,
     userId: args.userId,
-    decision,
-    agentReason: reason,
+    decision: uploaded > 0 ? "angle_found" : "angle_error",
+    agentReason:
+      uploaded > 0
+        ? `uploaded ${uploadedFeeds.join(", ")} (${uploaded}/${angles.length})`
+        : `${angles.length} angle(s) resolved but all uploads failed`,
     eventTs: args.eventTs,
   });
 
-  args.logger.info("angle trigger no angle", {
+  args.logger.info("angle trigger completed", {
     gamePk: args.gamePk,
     playIndex: args.playIndex,
     userId: args.userId,
-    decision,
+    resolved: angles.length,
+    uploaded,
   });
 }
 
