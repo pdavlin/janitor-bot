@@ -1,11 +1,8 @@
 /**
- * Tests for handleAngleTrigger: the :movie_camera:-reaction alternate-angle window
- * and dedup. The angle resolver is stubbed (no_alternate) so the upload
- * path is never reached — these guard the window + dedup gating only.
- *
- * The window test is the regression guard for the Slack-ts date bug: the
- * handler previously did `new Date(eventTs)` on an epoch-seconds string
- * (Invalid Date → NaN), so the age check never rejected anything.
+ * Tests for handleAngleTrigger: the :movie_camera:-reaction dedup and the
+ * absence of any age/window gate. The angle resolver is stubbed (returns an
+ * empty array) so the upload path is never reached — these guard the
+ * enable/dedup/no-gate behavior only.
  */
 
 import { test, expect, describe, beforeEach } from "bun:test";
@@ -57,7 +54,7 @@ function seedPlay(db: Database): void {
 
 function baseArgs(
   db: Database,
-  resolveAngle: AngleTriggerDeps["resolveAngle"],
+  resolveAngles: AngleTriggerDeps["resolveAngles"],
 ): { args: AngleTriggerArgs; deps: AngleTriggerDeps } {
   return {
     args: {
@@ -72,7 +69,7 @@ function baseArgs(
       eventTs: `${Math.floor(Date.now() / 1000)}.000000`,
       enabled: true,
     },
-    deps: { resolveAngle },
+    deps: { resolveAngles },
   };
 }
 
@@ -85,11 +82,11 @@ describe("handleAngleTrigger dedup + no time gate", () => {
   test("enabled play: resolver is called", async () => {
     seedPlay(db);
     let calls = 0;
-    const resolveAngle = async () => {
+    const resolveAngles = async () => {
       calls++;
-      return { status: "no_alternate" as const };
+      return [];
     };
-    const { args, deps } = baseArgs(db, resolveAngle);
+    const { args, deps } = baseArgs(db, resolveAngles);
     await handleAngleTrigger(args, deps);
     expect(calls).toBe(1);
     db.close();
@@ -99,11 +96,11 @@ describe("handleAngleTrigger dedup + no time gate", () => {
     seedPlay(db);
     db.run("UPDATE plays SET created_at = '2020-01-01 00:00:00' WHERE game_pk = 7000;");
     let calls = 0;
-    const resolveAngle = async () => {
+    const resolveAngles = async () => {
       calls++;
-      return { status: "no_alternate" as const };
+      return [];
     };
-    const { args, deps } = baseArgs(db, resolveAngle);
+    const { args, deps } = baseArgs(db, resolveAngles);
     await handleAngleTrigger(args, deps);
     expect(calls).toBe(1); // age is irrelevant now; the gate was removed
     db.close();
@@ -112,11 +109,11 @@ describe("handleAngleTrigger dedup + no time gate", () => {
   test("dedup: a second tap on the same play does not re-resolve", async () => {
     seedPlay(db);
     let calls = 0;
-    const resolveAngle = async () => {
+    const resolveAngles = async () => {
       calls++;
-      return { status: "no_alternate" as const };
+      return [];
     };
-    const { args, deps } = baseArgs(db, resolveAngle);
+    const { args, deps } = baseArgs(db, resolveAngles);
     await handleAngleTrigger(args, deps);
     await handleAngleTrigger(args, deps);
     expect(calls).toBe(1);
@@ -126,11 +123,11 @@ describe("handleAngleTrigger dedup + no time gate", () => {
   test("feature flag off: resolver is not called", async () => {
     seedPlay(db);
     let calls = 0;
-    const resolveAngle = async () => {
+    const resolveAngles = async () => {
       calls++;
-      return { status: "no_alternate" as const };
+      return [];
     };
-    const { args, deps } = baseArgs(db, resolveAngle);
+    const { args, deps } = baseArgs(db, resolveAngles);
     await handleAngleTrigger({ ...args, enabled: false }, deps);
     expect(calls).toBe(0);
     db.close();

@@ -1,9 +1,9 @@
 /**
  * Film Room alternate-angle fetcher for outfield assist plays.
  *
- * Given a (gamePk, playId), probes the Film Room CDN for the broadcast
- * feeds (home, then away) and returns the first available one's URL and
- * downloaded bytes so the caller can upload the clip to Slack.
+ * Given a (gamePk, playId), probes the Film Room CDN for the candidate
+ * feeds and returns every available one's URL and downloaded bytes so the
+ * caller can upload them to Slack.
  *
  * The CDN URL pattern is:
  *   https://fastball-clips.mlb.com/{gamePk}/{feedType}/{playId}.mp4
@@ -12,31 +12,31 @@
  * the CDN 302-redirects to a Film Room search page instead of serving the
  * video.
  *
- * We use the broadcast feeds (home/away), NOT the fixed Statcast cameras:
- * cf/highhome are anchored on the pitcher/plate and only show the pitch and
- * contact, never the outfielder's throw. The broadcast feed follows the
- * ball into the outfield, the throw, and the tag.
+ * Feeds: the home/away broadcasts follow the ball into the outfield (the
+ * throw, the tag); `highhome` is the elevated camera behind the plate that
+ * looks out over the field and may also frame the throw. We deliberately
+ * exclude `cf` — it looks IN at the pitcher from center field and only
+ * shows the pitch and contact, never the outfielder's throw.
  */
 
 import type { Logger } from "../logger";
 
-/** Broadcast feed types, in preference order. */
-export type FeedType = "home" | "away";
+/** Candidate feed types, in preference order. */
+export type FeedType = "home" | "away" | "highhome";
+
+/** A successfully fetched feed clip. */
+export interface FoundAngle {
+  feedType: FeedType;
+  url: string;
+  bytes: ArrayBuffer;
+}
 
 /**
- * Discriminated outcome of an alternate-angle fetch attempt.
- *
- * `no_alternate` (a definite "no angle for this play") is distinct from
- * `error` (transient) so the handler can log them differently; both result
- * in no post to the thread.
+ * Feeds to fetch, in order. home/away are the broadcasts that follow the
+ * ball; highhome is the behind-the-plate elevated camera (added to evaluate
+ * whether it frames the outfield throw).
  */
-export type AngleResult =
-  | { status: "found"; feedType: FeedType; url: string; bytes: ArrayBuffer }
-  | { status: "no_alternate" }
-  | { status: "error"; error: string };
-
-/** Broadcast feeds in preference order; they follow the ball and show the throw. */
-const ANGLE_PREFERENCE: readonly FeedType[] = ["home", "away"] as const;
+const ANGLE_PREFERENCE: readonly FeedType[] = ["home", "away", "highhome"] as const;
 
 const REFERER = "https://www.mlb.com/video";
 
@@ -62,22 +62,25 @@ export function buildAngleUrl(
 }
 
 /**
- * Probes the Film Room CDN for the broadcast feeds and returns the first
- * available one with its downloaded bytes.
+ * Probes the Film Room CDN for ALL candidate feeds (home, away, highhome)
+ * and returns every one that is available, each with its downloaded bytes.
  *
- * Tries `home` first, then `away`. On a 200 response, downloads the full
- * mp4 (6-9 MB typically). On 400/404, tries the next feed type.
+ * Each feed is a distinct view of the play, so the caller posts all that
+ * exist. A 400/404/error on one feed is skipped; the others still return.
+ * Empty array = no angle available for this play.
  *
  * @param gamePk - MLB game identifier.
  * @param playId - Savant play UUID.
  * @param logger - Optional logger for diagnostics.
- * @returns Discriminated result: found (with bytes), no_alternate, or error.
+ * @returns Array of found angles (possibly empty); each carries its bytes.
  */
-export async function resolveAlternateAngle(
+export async function resolveAlternateAngles(
   gamePk: number,
   playId: string,
   logger?: Logger,
-): Promise<AngleResult> {
+): Promise<FoundAngle[]> {
+  const found: FoundAngle[] = [];
+
   for (const feedType of ANGLE_PREFERENCE) {
     const url = buildAngleUrl(gamePk, feedType, playId);
 
@@ -99,11 +102,11 @@ export async function resolveAlternateAngle(
           url,
           sizeBytes: bytes.byteLength,
         });
-        return { status: "found", feedType, url, bytes };
+        found.push({ feedType, url, bytes });
+        continue;
       }
 
-      // 400/404 → try next feed type. Other errors are also non-fatal
-      // for this feed type but logged for diagnostics.
+      // 400/404 → this feed isn't available for the play; others may be.
       if (response.status === 400 || response.status === 404) {
         logger?.debug("filmroom angle not available", {
           gamePk,
@@ -114,7 +117,6 @@ export async function resolveAlternateAngle(
         continue;
       }
 
-      // Unexpected non-200 — log and try next.
       logger?.warn("filmroom angle unexpected status", {
         gamePk,
         playId,
@@ -124,8 +126,6 @@ export async function resolveAlternateAngle(
     } catch (err) {
       if (err instanceof DOMException && err.name === "TimeoutError") {
         logger?.warn("filmroom angle timeout", { gamePk, playId, feedType });
-        // Timeout on one feed type is likely to timeout on the other too,
-        // but spec says try each.
         continue;
       }
       logger?.warn("filmroom angle fetch error", {
@@ -138,6 +138,8 @@ export async function resolveAlternateAngle(
     }
   }
 
-  logger?.debug("filmroom no alternate angle available", { gamePk, playId });
-  return { status: "no_alternate" };
+  if (found.length === 0) {
+    logger?.debug("filmroom no alternate angle available", { gamePk, playId });
+  }
+  return found;
 }
