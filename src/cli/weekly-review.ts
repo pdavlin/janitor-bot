@@ -360,11 +360,7 @@ async function runFull(
       },
     );
 
-    const validated = validateFindings(
-      agentResult.rawFindings,
-      gathered.transcript,
-      logger,
-    );
+    const validated = validateFindings(agentResult.rawFindings, logger);
     const ordered = orderFindings(validated.accepted).filter(
       byMinStrength(flags.minStrength),
     );
@@ -605,7 +601,7 @@ async function runDryRun(
       toolContext: { db, logger },
     },
   );
-  const validated = validateFindings(result.rawFindings, gathered.transcript, logger);
+  const validated = validateFindings(result.rawFindings, logger);
   process.stdout.write(
     JSON.stringify(
       {

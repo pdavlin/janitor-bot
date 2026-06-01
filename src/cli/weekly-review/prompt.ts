@@ -2,8 +2,9 @@
  * Builds the system + user prompts handed to the Anthropic Messages API.
  *
  * The system prompt is the contract: bot context, the goal (systematic
- * patterns covering 2+ plays), the hard rules (no quotes, no mentions,
- * no per-play tier verdicts), the JSON schema, the severity rubric,
+ * patterns covering 2+ plays), the hard rules (quoting allowed but
+ * anonymous — no names/mentions/URLs, no per-play tier verdicts), the
+ * JSON schema, the severity rubric,
  * the evidence-strength rubric, and the rule-area allow-list (pasted
  * verbatim from `RULE_AREAS`).
  *
@@ -49,9 +50,9 @@ export interface BuildPromptInput {
 const CHARS_PER_TOKEN = 4;
 
 const HARD_RULES = `Output discipline (HARD RULES):
-1. Do NOT quote or paraphrase user comments.
-2. Do NOT include Slack mentions, URLs, or user IDs.
-3. Describe patterns abstractly. Example: "channel pushed back on RF->Home throws" is good. "User X said '<text>'" is FORBIDDEN.
+1. Channel discussion is meaningful signal — you MAY quote or paraphrase what was said when it supports a finding. Keep it anonymous.
+2. NEVER attribute a comment to a person. Do NOT include names, Slack mentions, user IDs, or URLs. Refer to "the channel" or "a member", never to an individual.
+3. Example: "a member withheld fire because the throw went through a cutoff" is good. Quoting the remark itself ("the throw never left his feet") is also fine. "User X said ..." with any name or mention is FORBIDDEN.
 4. Output is strictly JSON matching the schema below; no prose outside it.
 5. Do NOT issue per-play tier verdicts ("this play should have been medium"). That's the operator's job.
 6. Do NOT propose code changes. Surface patterns; the operator decides.`;
