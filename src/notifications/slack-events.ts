@@ -31,7 +31,7 @@ import { getUserInfo, isVotingEligible } from "./slack-user-cache";
 import type { SlackClientConfig } from "./slack-client";
 import { attributeToPlay, parseTags } from "./comment-tags";
 import { insertPlayTag } from "./play-tags-store";
-import { rematchPlay, type RematchPlayDeps } from "./play-rematch-handler";
+import { rematchPlay, handleAngleTrigger, type RematchPlayDeps, type AngleTriggerDeps } from "./play-rematch-handler";
 
 /** Slack rejects timestamps drifting more than five minutes from now. */
 const FIVE_MINUTES_S = 60 * 5;
@@ -156,14 +156,23 @@ export interface RematchDispatchConfig {
   model: string;
 }
 
+export interface AngleDispatchConfig {
+  enabled: boolean;
+  windowHours: number;
+}
+
 export interface DispatchContext {
   db: Database;
   logger: Logger;
   slackConfig: SlackClientConfig;
   /** When omitted, the :repeat: reaction is silently ignored. */
   rematch?: RematchDispatchConfig;
+  /** When omitted, the :movie_camera: reaction is silently ignored. */
+  angle?: AngleDispatchConfig;
   /** Test seam: injected dependencies for the re-match orchestrator. */
   rematchDeps?: RematchPlayDeps;
+  /** Test seam: injected dependencies for the angle trigger. */
+  angleDeps?: AngleTriggerDeps;
 }
 
 /**
@@ -208,6 +217,16 @@ async function handleReactionEvent(
     // are dropped silently.
     if (event.type === "reaction_added") {
       await handleRematchReaction(event, ctx);
+    }
+    return;
+  }
+
+  if (event.reaction === "movie_camera") {
+    // Dedicated alternate-angle trigger. Like :repeat:, it is a one-shot
+    // side effect, not a vote — so removals are dropped and added taps are
+    // handled and returned (no vote interaction).
+    if (event.type === "reaction_added") {
+      await handleAngleReaction(event, ctx);
     }
     return;
   }
@@ -257,6 +276,40 @@ async function handleRematchReaction(
       model: ctx.rematch.model,
     },
     ctx.rematchDeps ?? {},
+  );
+}
+
+async function handleAngleReaction(
+  event: Extract<SlackEvent, { type: "reaction_added" }>,
+  ctx: DispatchContext,
+): Promise<void> {
+  if (!ctx.angle || !ctx.angle.enabled) return;
+
+  const lookup = lookupPlayMessageByTs(
+    ctx.db,
+    event.item.channel,
+    event.item.ts,
+  );
+  if (!lookup) return;
+
+  const userInfo = await getUserInfo(ctx.slackConfig, event.user, ctx.logger);
+  if (!isVotingEligible(userInfo)) return;
+
+  await handleAngleTrigger(
+    {
+      db: ctx.db,
+      slackConfig: ctx.slackConfig,
+      logger: ctx.logger,
+      channel: event.item.channel,
+      ts: event.item.ts,
+      gamePk: lookup.gamePk,
+      playIndex: lookup.playIndex,
+      userId: event.user,
+      eventTs: event.event_ts,
+      enabled: ctx.angle.enabled,
+      windowHours: ctx.angle.windowHours,
+    },
+    ctx.angleDeps ?? {},
   );
 }
 

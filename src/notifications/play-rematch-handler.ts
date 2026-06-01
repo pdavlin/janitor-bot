@@ -27,6 +27,7 @@ import type { HighlightItem } from "../types/mlb-api";
 import {
   editPlayMessage,
   postThreadTextWithTs,
+  uploadFile,
   type SlackClientConfig,
 } from "./slack-client";
 import { buildPlayReplyMessage } from "./slack-formatter";
@@ -34,8 +35,11 @@ import type { StoredPlay } from "../types/play";
 import {
   getLatestRematchEvent,
   insertPlayRematchEvent,
+  insertAngleEvent,
+  hasAngleTriggerRun,
   type PlayRematchEvent,
 } from "./play-rematch-events-store";
+import { resolveAlternateAngle } from "../detection/filmroom-angles";
 
 export interface RematchPlayArgs {
   db: Database;
@@ -65,6 +69,26 @@ export interface RematchPlayDeps {
     gamePk: number,
     logger: Logger,
   ) => Promise<HighlightItem[]>;
+}
+
+export interface AngleTriggerArgs {
+  db: Database;
+  slackConfig: SlackClientConfig;
+  logger: Logger;
+  channel: string;
+  ts: string;
+  gamePk: number;
+  playIndex: number;
+  userId: string;
+  eventTs: string;
+  /** Feature flag. When false, the handler returns immediately. */
+  enabled: boolean;
+  /** Maximum age of the play's post in hours for angle eligibility. */
+  windowHours: number;
+}
+
+export interface AngleTriggerDeps {
+  resolveAngle?: typeof resolveAlternateAngle;
 }
 
 /** Minimal play shape the orchestrator needs. */
@@ -199,6 +223,151 @@ export async function rematchPlay(
   }
 
   await applyOutcome(args, play, result, usable);
+}
+
+/**
+ * Orchestrator for a single `:movie_camera:` reaction on a play reply.
+ *
+ * Flow:
+ *   1. Feature-flag check — full short-circuit when disabled.
+ *   2. Window check — ignore if the play's post is older than the configured window.
+ *   3. Dedup — if a angle-trigger already ran for this play, record and stop.
+ *   4. Record the attempt.
+ *   5. Resolve alternate angle from Film Room CDN.
+ *   6. On `found`, upload the angle to the thread; on `no_alternate`/`error`, post nothing.
+ */
+export async function handleAngleTrigger(
+  args: AngleTriggerArgs,
+  deps: AngleTriggerDeps = {},
+): Promise<void> {
+  if (!args.enabled) {
+    args.logger.debug("angle trigger disabled by feature flag", {
+      gamePk: args.gamePk,
+      playIndex: args.playIndex,
+    });
+    return;
+  }
+
+  // Window check: ignore plays older than the configured window.
+  const play = readPlayForAngle(args.db, args.gamePk, args.playIndex);
+  if (!play) {
+    args.logger.warn("angle: play row not found", {
+      gamePk: args.gamePk,
+      playIndex: args.playIndex,
+    });
+    return;
+  }
+
+  // Slack event_ts is epoch SECONDS as a string ("1779832888.133879");
+  // new Date(string) on that yields Invalid Date, so parse it numerically.
+  // SQLite datetime('now') is UTC with a space separator — force UTC parse.
+  const eventEpoch = parseFloat(args.eventTs);
+  const nowMs = Number.isFinite(eventEpoch) ? eventEpoch * 1000 : Date.now();
+  const createdMs = new Date(`${play.createdAt.replace(" ", "T")}Z`).getTime();
+  const ageHours = (nowMs - createdMs) / (1000 * 60 * 60);
+  if (Number.isFinite(ageHours) && ageHours > args.windowHours) {
+    args.logger.debug("angle: play outside window", {
+      gamePk: args.gamePk,
+      playIndex: args.playIndex,
+      ageHours: Math.round(ageHours),
+      windowHours: args.windowHours,
+    });
+    return;
+  }
+
+  // Dedup: if a angle-trigger already ran for this play, record and stop.
+  if (hasAngleTriggerRun(args.db, args.gamePk, args.playIndex)) {
+    insertAngleEvent(args.db, {
+      gamePk: args.gamePk,
+      playIndex: args.playIndex,
+      userId: args.userId,
+      decision: "angle_deduped",
+      agentReason: "angle trigger already attempted for this play",
+      eventTs: args.eventTs,
+    });
+    args.logger.info("angle deduped", {
+      gamePk: args.gamePk,
+      playIndex: args.playIndex,
+      userId: args.userId,
+    });
+    return;
+  }
+
+  if (!play.playId) {
+    insertAngleEvent(args.db, {
+      gamePk: args.gamePk,
+      playIndex: args.playIndex,
+      userId: args.userId,
+      decision: "angle_no_alternate",
+      agentReason: "no play_id available for angle lookup",
+      eventTs: args.eventTs,
+    });
+    args.logger.debug("angle: no play_id on play", {
+      gamePk: args.gamePk,
+      playIndex: args.playIndex,
+    });
+    return;
+  }
+
+  // Resolve alternate angle.
+  const resolveAngle = deps.resolveAngle ?? resolveAlternateAngle;
+  const result = await resolveAngle(args.gamePk, play.playId, args.logger);
+
+  if (result.status === "found") {
+    // Upload the angle to the thread.
+    const angleLabel =
+      result.feedType === "cf" ? "Center field angle" : "High home angle";
+    const filename = `${result.feedType}-angle.mp4`;
+
+    const uploadResult = await uploadFile(
+      args.slackConfig,
+      args.channel,
+      args.ts,
+      result.bytes,
+      filename,
+      angleLabel,
+      args.logger,
+    );
+
+    insertAngleEvent(args.db, {
+      gamePk: args.gamePk,
+      playIndex: args.playIndex,
+      userId: args.userId,
+      decision: "angle_found",
+      agentReason: uploadResult
+        ? `${result.feedType} angle uploaded` : `${result.feedType} angle resolved but upload failed`,
+      eventTs: args.eventTs,
+    });
+
+    args.logger.info("angle trigger completed", {
+      gamePk: args.gamePk,
+      playIndex: args.playIndex,
+      userId: args.userId,
+      feedType: result.feedType,
+      uploadOk: uploadResult !== null,
+    });
+    return;
+  }
+
+  // no_alternate or error — record outcome and post nothing.
+  const decision = result.status === "no_alternate" ? "angle_no_alternate" : "angle_error";
+  const reason = result.status === "error" ? result.error : "no alternate angle available";
+
+  insertAngleEvent(args.db, {
+    gamePk: args.gamePk,
+    playIndex: args.playIndex,
+    userId: args.userId,
+    decision,
+    agentReason: reason,
+    eventTs: args.eventTs,
+  });
+
+  args.logger.info("angle trigger no angle", {
+    gamePk: args.gamePk,
+    playIndex: args.playIndex,
+    userId: args.userId,
+    decision,
+  });
 }
 
 async function applyOutcome(
@@ -407,6 +576,34 @@ function readPlay(
     fielderId: row.fielder_id,
     videoUrl: row.video_url,
     videoTitle: row.video_title,
+  };
+}
+
+/** Minimal play shape the angle handler needs. */
+interface PlayForAngle {
+  playId: string | null;
+  createdAt: string;
+}
+
+function readPlayForAngle(
+  db: Database,
+  gamePk: number,
+  playIndex: number,
+): PlayForAngle | null {
+  const row = db
+    .prepare(`
+      SELECT play_id, created_at
+      FROM plays
+      WHERE game_pk = $gamePk AND play_index = $playIndex
+      LIMIT 1;
+    `)
+    .get({ $gamePk: gamePk, $playIndex: playIndex }) as
+    | { play_id: string | null; created_at: string }
+    | null;
+  if (!row) return null;
+  return {
+    playId: row.play_id,
+    createdAt: row.created_at,
   };
 }
 

@@ -22,6 +22,12 @@ import {
   buildPlayReplyMessage,
 } from "./slack-formatter";
 
+/** Result of a successful external file upload. */
+export interface UploadFileResult {
+  ok: true;
+  file: { id: string; name: string; };
+}
+
 const SLACK_API_BASE = "https://slack.com/api";
 
 /** Result of a successful chat.postMessage. */
@@ -316,7 +322,7 @@ export async function postThreadTextWithTs(
  * reaction_added events from the bot's own user_id that are skipped during
  * vote counting.
  */
-const SEED_REACTIONS: readonly string[] = ["fire", "wastebasket", "repeat"];
+const SEED_REACTIONS: readonly string[] = ["fire", "wastebasket", "repeat", "movie_camera"];
 
 /**
  * Seeds the bot's own :fire: and :wastebasket: reactions on a posted message
@@ -359,6 +365,113 @@ const CONFIRM_REJECT_SEED_REACTIONS: readonly string[] = [
  * users tap to confirm or reject the finding. Same failure semantics as
  * seedVoteReactions: logged and swallowed.
  */
+/**
+ * Uploads a file to a Slack channel thread via the external-upload flow.
+ *
+ * `files.upload` was sunset by Slack, so this uses the three-step
+ * replacement: `files.getUploadURLExternal` to reserve an upload URL +
+ * file id, a direct POST of the bytes to that URL, then
+ * `files.completeUploadExternal` to attach the file to the thread.
+ *
+ * @param config - Slack client config with bot token.
+ * @param channel - Channel id to upload to.
+ * @param threadTs - Thread parent message ts.
+ * @param fileContent - Raw file bytes.
+ * @param filename - Display filename (e.g. "cf-angle.mp4").
+ * @param initialComment - Optional text label posted alongside the file.
+ * @param logger - Logger instance for diagnostics.
+ * @returns UploadFileResult on success, null on failure.
+ */
+export async function uploadFile(
+  config: SlackClientConfig,
+  channel: string,
+  threadTs: string,
+  fileContent: ArrayBuffer,
+  filename: string,
+  initialComment: string,
+  logger: Logger,
+): Promise<UploadFileResult | null> {
+  if (!config.botToken) {
+    logger.debug("uploadFile skipped: no bot token");
+    return null;
+  }
+  const token = config.botToken;
+
+  // Step 1: reserve an upload URL + file id.
+  let reserve: { ok: boolean; upload_url?: string; file_id?: string; error?: string };
+  try {
+    const res = await fetch(`${SLACK_API_BASE}/files.getUploadURLExternal`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        filename,
+        length: String(fileContent.byteLength),
+      }),
+    });
+    reserve = (await res.json()) as typeof reserve;
+  } catch (err) {
+    logger.warn("slack files.getUploadURLExternal failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+  if (!reserve.ok || !reserve.upload_url || !reserve.file_id) {
+    logger.warn("slack files.getUploadURLExternal non-ok", { error: reserve.error });
+    return null;
+  }
+
+  // Step 2: POST the raw bytes to the reserved URL.
+  try {
+    const up = await fetch(reserve.upload_url, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: fileContent,
+    });
+    if (!up.ok) {
+      logger.warn("slack external file byte upload failed", { status: up.status });
+      return null;
+    }
+  } catch (err) {
+    logger.warn("slack external file byte upload request failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+
+  // Step 3: attach the uploaded file to the thread.
+  let complete: { ok: boolean; error?: string };
+  try {
+    const res = await fetch(`${SLACK_API_BASE}/files.completeUploadExternal`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        files: JSON.stringify([{ id: reserve.file_id, title: filename }]),
+        channel_id: channel,
+        thread_ts: threadTs,
+        initial_comment: initialComment,
+      }),
+    });
+    complete = (await res.json()) as typeof complete;
+  } catch (err) {
+    logger.warn("slack files.completeUploadExternal failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+  if (!complete.ok) {
+    logger.warn("slack files.completeUploadExternal non-ok", { error: complete.error });
+    return null;
+  }
+
+  return { ok: true, file: { id: reserve.file_id, name: filename } };
+}
+
 export async function seedConfirmRejectReactions(
   config: SlackClientConfig,
   channel: string,

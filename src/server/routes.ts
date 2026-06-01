@@ -31,6 +31,7 @@ import {
   dispatchEvent,
   type SlackEventEnvelope,
   type RematchDispatchConfig,
+  type AngleDispatchConfig,
 } from "../notifications/slack-events";
 import type { SlackClientConfig } from "../notifications/slack-client";
 
@@ -48,6 +49,8 @@ export interface ServerDeps {
   slackConfig?: SlackClientConfig;
   /** Re-match (:repeat:) reaction handler config. Omit to disable. */
   rematch?: RematchDispatchConfig;
+  /** Alternate-angle (:movie_camera:) reaction handler config. Omit to disable. */
+  angle?: AngleDispatchConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -230,6 +233,7 @@ interface HandlerContext {
   slackSigningSecret?: string;
   slackConfig?: SlackClientConfig;
   rematch?: RematchDispatchConfig;
+  angle?: AngleDispatchConfig;
 }
 
 /**
@@ -347,6 +351,7 @@ async function handleSlackEvents(
       logger: ctx.logger,
       slackConfig: ctx.slackConfig,
       rematch: ctx.rematch,
+      angle: ctx.angle,
     };
     queueMicrotask(() => {
       dispatchEvent(envelope, dispatchCtx).catch((err) => {
@@ -389,6 +394,7 @@ export function startServer(deps: ServerDeps): HttpServer {
     slackSigningSecret,
     slackConfig,
     rematch,
+    angle,
   } = deps;
 
   const ctx: HandlerContext = {
@@ -399,6 +405,7 @@ export function startServer(deps: ServerDeps): HttpServer {
     slackSigningSecret,
     slackConfig,
     rematch,
+    angle,
   };
 
   const server = Bun.serve({

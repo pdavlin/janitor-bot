@@ -33,6 +33,16 @@ export interface Config {
    * agent call, no DB write, no Slack edit.
    */
   rematchAgentEnabled: boolean;
+  /**
+   * Feature flag for the :movie_camera: alternate-angle flow. When false,
+   * the reaction does nothing; :fire: voting is unaffected either way.
+   */
+  angleTriggerEnabled: boolean;
+  /**
+   * Maximum age (in hours) of a play's post for angle-trigger eligibility.
+   * Plays older than this window are silently ignored. Default: 24 hours.
+   */
+  angleTriggerWindowHours: number;
   /** Past-findings lookback (in weeks) used by the prompt builder. */
   agentHistoryWeeks: number;
   /**
@@ -165,6 +175,8 @@ export function loadConfig(): Config {
       process.env.AGENT_MODEL ??
       "claude-sonnet-4-6",
     rematchAgentEnabled: parseBoolFlag(process.env.REMATCH_AGENT_ENABLED, false),
+    angleTriggerEnabled: parseBoolFlag(process.env.ANGLE_TRIGGER_ENABLED, false),
+    angleTriggerWindowHours: parsePositiveNumber(process.env.ANGLE_TRIGGER_WINDOW_HOURS, 24),
     agentHistoryWeeks,
     operatorUserId,
   };
@@ -178,4 +190,11 @@ function parseBoolFlag(raw: string | undefined, fallback: boolean): boolean {
     return false;
   }
   return fallback;
+}
+
+function parsePositiveNumber(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
 }

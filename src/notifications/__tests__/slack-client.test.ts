@@ -16,6 +16,7 @@ import {
   seedVoteReactions,
   sendGameNotifications,
   sendWebhook,
+  uploadFile,
 } from "../slack-client";
 import type { GameFinalScore } from "../slack-formatter";
 import type { Logger } from "../../logger";
@@ -304,7 +305,7 @@ describe("postThreadReply", () => {
 });
 
 describe("seedVoteReactions", () => {
-  test("calls reactions.add for fire, wastebasket, and repeat in order", async () => {
+  test("calls reactions.add for fire, wastebasket, repeat, and movie_camera in order", async () => {
     const calls: { url: string; body: Record<string, unknown> }[] = [];
     mockFetch((input, init) => {
       calls.push({
@@ -323,23 +324,14 @@ describe("seedVoteReactions", () => {
       makeSilentLogger(),
     );
 
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
     expect(calls[0].url).toBe("https://slack.com/api/reactions.add");
-    expect(calls[0].body).toEqual({
-      channel: "C1",
-      timestamp: "1234.5678",
-      name: "fire",
-    });
-    expect(calls[1].body).toEqual({
-      channel: "C1",
-      timestamp: "1234.5678",
-      name: "wastebasket",
-    });
-    expect(calls[2].body).toEqual({
-      channel: "C1",
-      timestamp: "1234.5678",
-      name: "repeat",
-    });
+    expect(calls.map((c) => (c.body as { name: string }).name)).toEqual([
+      "fire",
+      "wastebasket",
+      "repeat",
+      "movie_camera",
+    ]);
   });
 
   test("logs and continues when one reaction fails", async () => {
@@ -367,7 +359,7 @@ describe("seedVoteReactions", () => {
       logger,
     );
 
-    expect(callCount).toBe(3);
+    expect(callCount).toBe(4);
     expect(logger.warn).toHaveBeenCalled();
   });
 
@@ -551,7 +543,8 @@ describe("sendGameNotifications (bot-token mode)", () => {
         JSON.stringify({ ok: true, channel: "C1", ts: "play.1" }),
         { status: 200 },
       ),
-      // Three reactions.add slots for play 1 (any ok response is fine)
+      // Four reactions.add slots for play 1 (any ok response is fine)
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
@@ -562,10 +555,12 @@ describe("sendGameNotifications (bot-token mode)", () => {
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(
         JSON.stringify({ ok: true, channel: "C1", ts: "play.3" }),
         { status: 200 },
       ),
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
@@ -595,8 +590,8 @@ describe("sendGameNotifications (bot-token mode)", () => {
       "play.3",
     ]);
 
-    // 1 header + 3 plays + (3 reactions x 3 plays) = 13 calls
-    expect(recorder.calls).toHaveLength(13);
+    // 1 header + 3 plays + (4 reactions x 3 plays) = 16 calls
+    expect(recorder.calls).toHaveLength(16);
 
     const postMessageCalls = recorder.calls.filter((c) =>
       c.url.endsWith("/chat.postMessage"),
@@ -605,7 +600,7 @@ describe("sendGameNotifications (bot-token mode)", () => {
       c.url.endsWith("/reactions.add"),
     );
     expect(postMessageCalls).toHaveLength(4);
-    expect(reactionCalls).toHaveLength(9);
+    expect(reactionCalls).toHaveLength(12);
 
     // Header has no thread_ts; the three replies do.
     expect(postMessageCalls[0].body?.thread_ts).toBeUndefined();
@@ -616,7 +611,7 @@ describe("sendGameNotifications (bot-token mode)", () => {
       });
     }
 
-    // Each play reply gets seeded with :fire:, :wastebasket:, then :repeat:.
+    // Each play reply gets seeded with :fire:, :wastebasket:, :repeat:, :movie_camera:.
     for (const playTs of ["play.1", "play.2", "play.3"]) {
       const seeds = reactionCalls.filter(
         (c) => (c.body as { timestamp?: string }).timestamp === playTs,
@@ -625,6 +620,7 @@ describe("sendGameNotifications (bot-token mode)", () => {
         "fire",
         "wastebasket",
         "repeat",
+        "movie_camera",
       ]);
     }
   });
@@ -756,5 +752,82 @@ describe("sendWebhook (legacy retry path)", () => {
 
     expect(ok).toBe(true);
     expect(callCount).toBe(2);
+  });
+});
+
+describe("uploadFile (external upload flow)", () => {
+  function bytes(): ArrayBuffer {
+    return new Uint8Array([1, 2, 3, 4]).buffer;
+  }
+
+  test("runs the three-step flow and returns the file id", async () => {
+    const calls: string[] = [];
+    mockFetch(async (input: URL | RequestInfo) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calls.push(url);
+      if (url.includes("/files.getUploadURLExternal")) {
+        return new Response(
+          JSON.stringify({ ok: true, upload_url: "https://up.example/u1", file_id: "F1" }),
+          { status: 200 },
+        );
+      }
+      if (url === "https://up.example/u1") {
+        return new Response("OK", { status: 200 });
+      }
+      if (url.includes("/files.completeUploadExternal")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const result = await uploadFile(
+      { botToken: "xoxb-test" },
+      "C1",
+      "100.001",
+      bytes(),
+      "cf-angle.mp4",
+      "Center field angle",
+      makeSilentLogger(),
+    );
+
+    expect(result).toMatchObject({ ok: true, file: { id: "F1", name: "cf-angle.mp4" } });
+    expect(calls[0]).toContain("/files.getUploadURLExternal");
+    expect(calls[1]).toBe("https://up.example/u1");
+    expect(calls[2]).toContain("/files.completeUploadExternal");
+  });
+
+  test("returns null and stops if the URL reservation fails", async () => {
+    const calls: string[] = [];
+    mockFetch(async (input: URL | RequestInfo) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calls.push(url);
+      return new Response(JSON.stringify({ ok: false, error: "invalid_auth" }), { status: 200 });
+    });
+
+    const result = await uploadFile(
+      { botToken: "xoxb-test" },
+      "C1",
+      "100.001",
+      bytes(),
+      "cf-angle.mp4",
+      "Center field angle",
+      makeSilentLogger(),
+    );
+
+    expect(result).toBeNull();
+    expect(calls).toHaveLength(1); // never proceeded to byte upload / complete
+  });
+
+  test("returns null when no bot token is configured", async () => {
+    const result = await uploadFile(
+      {},
+      "C1",
+      "100.001",
+      bytes(),
+      "cf-angle.mp4",
+      "Center field angle",
+      makeSilentLogger(),
+    );
+    expect(result).toBeNull();
   });
 });
