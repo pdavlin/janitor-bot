@@ -83,8 +83,6 @@ export interface AngleTriggerArgs {
   eventTs: string;
   /** Feature flag. When false, the handler returns immediately. */
   enabled: boolean;
-  /** Maximum age of the play's post in hours for angle eligibility. */
-  windowHours: number;
 }
 
 export interface AngleTriggerDeps {
@@ -230,11 +228,14 @@ export async function rematchPlay(
  *
  * Flow:
  *   1. Feature-flag check — full short-circuit when disabled.
- *   2. Window check — ignore if the play's post is older than the configured window.
- *   3. Dedup — if a angle-trigger already ran for this play, record and stop.
- *   4. Record the attempt.
- *   5. Resolve alternate angle from Film Room CDN.
- *   6. On `found`, upload the angle to the thread; on `no_alternate`/`error`, post nothing.
+ *   2. Dedup — if an angle-trigger already ran for this play, record and stop.
+ *   3. Record the attempt.
+ *   4. Resolve alternate angle from Film Room CDN.
+ *   5. On `found`, upload the angle to the thread; on `no_alternate`/`error`, post nothing.
+ *
+ * There is no age/window gate: a reaction on any play is honored. Dedup
+ * (one attempt per play) is what bounds work, so a stray reaction on an
+ * old play triggers at most one fetch.
  */
 export async function handleAngleTrigger(
   args: AngleTriggerArgs,
@@ -248,7 +249,6 @@ export async function handleAngleTrigger(
     return;
   }
 
-  // Window check: ignore plays older than the configured window.
   const play = readPlayForAngle(args.db, args.gamePk, args.playIndex);
   if (!play) {
     args.logger.warn("angle: play row not found", {
@@ -258,24 +258,7 @@ export async function handleAngleTrigger(
     return;
   }
 
-  // Slack event_ts is epoch SECONDS as a string ("1779832888.133879");
-  // new Date(string) on that yields Invalid Date, so parse it numerically.
-  // SQLite datetime('now') is UTC with a space separator — force UTC parse.
-  const eventEpoch = parseFloat(args.eventTs);
-  const nowMs = Number.isFinite(eventEpoch) ? eventEpoch * 1000 : Date.now();
-  const createdMs = new Date(`${play.createdAt.replace(" ", "T")}Z`).getTime();
-  const ageHours = (nowMs - createdMs) / (1000 * 60 * 60);
-  if (Number.isFinite(ageHours) && ageHours > args.windowHours) {
-    args.logger.debug("angle: play outside window", {
-      gamePk: args.gamePk,
-      playIndex: args.playIndex,
-      ageHours: Math.round(ageHours),
-      windowHours: args.windowHours,
-    });
-    return;
-  }
-
-  // Dedup: if a angle-trigger already ran for this play, record and stop.
+  // Dedup: if an angle-trigger already ran for this play, record and stop.
   if (hasAngleTriggerRun(args.db, args.gamePk, args.playIndex)) {
     insertAngleEvent(args.db, {
       gamePk: args.gamePk,

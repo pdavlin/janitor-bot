@@ -70,7 +70,6 @@ async function main(): Promise<void> {
     },
     angle: {
       enabled: config.angleTriggerEnabled,
-      windowHours: config.angleTriggerWindowHours,
     },
   });
 
