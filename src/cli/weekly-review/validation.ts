@@ -1,11 +1,16 @@
 /**
  * Output validation for findings returned by the LLM.
  *
- * Three rejection rules per finding's `description`:
- *   1. Quote characters anywhere in the description.
- *   2. Slack mention syntax (`<@`, `<#`, `<!`).
- *   3. Any 30-char contiguous substring that also appears verbatim in a
- *      transcript message (description -> transcript direction).
+ * Findings MAY quote or reference channel discussion — that content is
+ * meaningful signal. The only privacy constraint is identity: a
+ * description must not carry a Slack mention/user-ID or a URL.
+ *
+ * Two rejection rules per finding's `description`:
+ *   1. Slack mention syntax (`<@`, `<#`, `<!`).
+ *   2. A URL (`http`/`https`/`www.`).
+ *
+ * NOTE: a plaintext name typed by a member (no Slack mention syntax) is
+ * not catchable here — that protection lives in the prompt's hard rules.
  *
  * Findings that fail any rule are dropped with their `finding_type`
  * surfaced for logging; the description itself is never logged. An
@@ -14,12 +19,11 @@
  */
 
 import type { Logger } from "../../logger";
-import type { Finding, Severity, EvidenceStrength, Trend, Transcript } from "./types";
+import type { Finding, Severity, EvidenceStrength, Trend } from "./types";
 import { normalizeRuleArea, RULE_AREAS } from "./rule-areas";
 
-const QUOTE_CHARS = ["\"", "“", "”", "'", "‘", "’"];
 const MENTION_TOKENS = ["<@", "<#", "<!"];
-const SUBSTRING_WINDOW = 30;
+const URL_PATTERN = /https?:\/\/|\bwww\./i;
 
 const SEVERITIES: readonly Severity[] = ["info", "watch", "act"];
 const STRENGTHS: readonly EvidenceStrength[] = ["weak", "moderate", "strong"];
@@ -47,7 +51,6 @@ export interface ValidationResult {
  */
 export function validateFindings(
   raw: unknown[],
-  transcript: Transcript,
   logger: Logger,
 ): ValidationResult {
   const accepted: Finding[] = [];
@@ -67,7 +70,7 @@ export function validateFindings(
     }
     const candidate = shape.value;
 
-    const descriptionReason = checkDescription(candidate.description, transcript);
+    const descriptionReason = checkDescription(candidate.description);
     if (descriptionReason) {
       logger.warn("agent finding rejected at description check", {
         finding_type: candidate.finding_type,
@@ -149,33 +152,16 @@ function checkShape(item: unknown): ShapeResult {
   };
 }
 
-function checkDescription(description: string, transcript: Transcript): string | null {
-  for (const ch of QUOTE_CHARS) {
-    if (description.includes(ch)) return "description contains a quote character";
-  }
+function checkDescription(description: string): string | null {
   for (const tok of MENTION_TOKENS) {
     if (description.includes(tok)) {
       return "description contains a Slack mention token";
     }
   }
-  if (description.length >= SUBSTRING_WINDOW) {
-    for (let offset = 0; offset <= description.length - SUBSTRING_WINDOW; offset++) {
-      const window = description.substring(offset, offset + SUBSTRING_WINDOW);
-      if (transcriptIncludes(transcript, window)) {
-        return "description matches a 30-char substring of a transcript message";
-      }
-    }
+  if (URL_PATTERN.test(description)) {
+    return "description contains a URL";
   }
   return null;
-}
-
-function transcriptIncludes(transcript: Transcript, needle: string): boolean {
-  for (const game of transcript.games) {
-    for (const message of game.messages) {
-      if (message.text.includes(needle)) return true;
-    }
-  }
-  return false;
 }
 
 /** Re-exported for callers that need the canonical ordering of rule areas. */

@@ -1,26 +1,8 @@
 import { test, expect, describe } from "bun:test";
 import { createLogger } from "../../../logger";
 import { validateFindings } from "../validation";
-import { buildTranscript, type Transcript } from "../types";
 
 const silentLogger = createLogger("error");
-
-const EMPTY_TRANSCRIPT: Transcript = buildTranscript([]);
-
-const TRANSCRIPT_WITH_QUOTE: Transcript = buildTranscript([
-  {
-    gamePk: 100,
-    headerTs: "1.000",
-    truncated: false,
-    messages: [
-      {
-        text: "channel literally said the runner was clearly safe by a step",
-        user: "U1",
-        ts: "1.001",
-      },
-    ],
-  },
-]);
 
 function baseFinding(overrides: Record<string, unknown> = {}): unknown {
   return {
@@ -37,50 +19,65 @@ function baseFinding(overrides: Record<string, unknown> = {}): unknown {
 
 describe("validateFindings", () => {
   test("accepts a clean finding", () => {
-    const result = validateFindings([baseFinding()], EMPTY_TRANSCRIPT, silentLogger);
+    const result = validateFindings([baseFinding()], silentLogger);
     expect(result.accepted).toHaveLength(1);
     expect(result.rejected).toHaveLength(0);
   });
 
-  test("rejects when description contains a quote character", () => {
+  test("accepts a finding that quotes channel discussion", () => {
     const result = validateFindings(
-      [baseFinding({ description: 'Channel said "this should be high"' })],
-      EMPTY_TRANSCRIPT,
+      [
+        baseFinding({
+          description:
+            'A member withheld fire, noting "the throw never left his feet" on the cutoff.',
+        }),
+      ],
       silentLogger,
     );
-    expect(result.accepted).toHaveLength(0);
-    expect(result.rejected[0]?.reason).toMatch(/quote/i);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.rejected).toHaveLength(0);
+  });
+
+  test("accepts a description with apostrophes and possessives", () => {
+    const result = validateFindings(
+      [
+        baseFinding({
+          description:
+            "This week's longest relay chain didn't draw any votes from the channel.",
+        }),
+      ],
+      silentLogger,
+    );
+    expect(result.accepted).toHaveLength(1);
+    expect(result.rejected).toHaveLength(0);
   });
 
   test("rejects when description contains a Slack mention token", () => {
     const result = validateFindings(
       [baseFinding({ description: "Channel pushed back per <@U1234>" })],
-      EMPTY_TRANSCRIPT,
       silentLogger,
     );
     expect(result.accepted).toHaveLength(0);
     expect(result.rejected[0]?.reason).toMatch(/mention/i);
   });
 
-  test("rejects on a 30-char substring match against a transcript message", () => {
-    const verbatim = "the runner was clearly safe by a step";
+  test("rejects when description contains a URL", () => {
     const result = validateFindings(
       [
         baseFinding({
-          description: `Pattern observed: ${verbatim} on multiple replays this week`,
+          description:
+            "A member posted a corrected clip at https://example.com/reel for the play.",
         }),
       ],
-      TRANSCRIPT_WITH_QUOTE,
       silentLogger,
     );
     expect(result.accepted).toHaveLength(0);
-    expect(result.rejected[0]?.reason).toMatch(/substring/i);
+    expect(result.rejected[0]?.reason).toMatch(/url/i);
   });
 
   test("rejects findings with a missing required field", () => {
     const result = validateFindings(
       [baseFinding({ severity: "weird" })],
-      EMPTY_TRANSCRIPT,
       silentLogger,
     );
     expect(result.accepted).toHaveLength(0);
@@ -90,7 +87,6 @@ describe("validateFindings", () => {
   test("rejects findings with empty evidence_play_ids", () => {
     const result = validateFindings(
       [baseFinding({ evidence_play_ids: [] })],
-      EMPTY_TRANSCRIPT,
       silentLogger,
     );
     expect(result.accepted).toHaveLength(0);
@@ -99,7 +95,6 @@ describe("validateFindings", () => {
   test("normalizes unknown rule_area to 'unknown' but still accepts", () => {
     const result = validateFindings(
       [baseFinding({ suspected_rule_area: "ranking.ts:not_a_real_area" })],
-      EMPTY_TRANSCRIPT,
       silentLogger,
     );
     expect(result.accepted).toHaveLength(1);
@@ -109,7 +104,6 @@ describe("validateFindings", () => {
   test("treats a null trend as null (not a rejection)", () => {
     const result = validateFindings(
       [baseFinding({ trend: null })],
-      EMPTY_TRANSCRIPT,
       silentLogger,
     );
     expect(result.accepted).toHaveLength(1);

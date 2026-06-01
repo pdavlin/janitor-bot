@@ -23,7 +23,6 @@ import { createLogger } from "../src/logger";
 import { callAgent } from "../src/cli/weekly-review/agent";
 import { WEEKLY_REVIEW_TOOLS } from "../src/cli/weekly-review/tools";
 import { validateFindings } from "../src/cli/weekly-review/validation";
-import { buildTranscript } from "../src/cli/weekly-review/types";
 import { readDump, type DumpRecord } from "../src/cli/weekly-review/dump";
 import type { Finding } from "../src/cli/weekly-review/types";
 import { createDatabase } from "../src/storage/db";
@@ -33,6 +32,7 @@ interface CliArgs {
   systemOverridePath?: string;
   userOverridePath?: string;
   modelOverride?: string;
+  showDescriptions: boolean;
 }
 
 class CliInputError extends Error {}
@@ -42,10 +42,15 @@ function parseArgs(argv: readonly string[]): CliArgs {
   let systemOverridePath: string | undefined;
   let userOverridePath: string | undefined;
   let modelOverride: string | undefined;
+  let showDescriptions = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     switch (arg) {
+      case "--descriptions": {
+        showDescriptions = true;
+        break;
+      }
       case "--dump": {
         const next = argv[++i];
         if (!next) throw new CliInputError("--dump requires a path");
@@ -76,7 +81,13 @@ function parseArgs(argv: readonly string[]): CliArgs {
   }
 
   if (!dumpPath) throw new CliInputError("--dump is required");
-  return { dumpPath, systemOverridePath, userOverridePath, modelOverride };
+  return {
+    dumpPath,
+    systemOverridePath,
+    userOverridePath,
+    modelOverride,
+    showDescriptions,
+  };
 }
 
 async function loadOverride(path: string | undefined): Promise<string | null> {
@@ -141,15 +152,6 @@ async function main(): Promise<void> {
     estimatedInputTokens: dump.prompt.estimatedInputTokens,
   };
 
-  const transcript = buildTranscript(
-    dump.transcript.games.map((g) => ({
-      gamePk: g.gamePk,
-      headerTs: g.headerTs,
-      truncated: g.truncated,
-      messages: g.messages,
-    })),
-  );
-
   process.stdout.write(`replaying dump captured ${dump.capturedAt}\n`);
   process.stdout.write(
     `  original: model=${dump.model}, accepted=${dump.validated.accepted.length}, rejected=${dump.validated.rejected.length}\n`,
@@ -170,7 +172,7 @@ async function main(): Promise<void> {
     tools: WEEKLY_REVIEW_TOOLS,
     toolContext: { db, logger },
   });
-  const validated = validateFindings(result.rawFindings, transcript, logger);
+  const validated = validateFindings(result.rawFindings, logger);
 
   const original = summarize(dump.validated.accepted);
   const replay = summarize(validated.accepted);
@@ -179,6 +181,14 @@ async function main(): Promise<void> {
   process.stdout.write("\n");
   process.stdout.write(formatCard("REPLAY accepted", replay));
   process.stdout.write("\n");
+
+  if (args.showDescriptions) {
+    process.stdout.write("REPLAY descriptions:\n");
+    for (const f of validated.accepted) {
+      process.stdout.write(`\n  ▸ ${f.finding_type}\n    ${f.description}\n`);
+    }
+    process.stdout.write("\n");
+  }
 
   const newInReplay = typeDiff(dump.validated.accepted, validated.accepted);
   const droppedFromReplay = typeDiff(validated.accepted, dump.validated.accepted);

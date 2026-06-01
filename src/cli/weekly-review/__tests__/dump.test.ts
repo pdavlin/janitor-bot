@@ -24,7 +24,7 @@ const SAMPLE_VALIDATED: ValidationResult = {
       trend: "first_seen",
     },
   ],
-  rejected: [{ finding_type: "x", reason: "description contains a quote character" }],
+  rejected: [{ finding_type: "x", reason: "description contains a Slack mention token" }],
 };
 
 let tempDir: string;

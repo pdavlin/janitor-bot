@@ -59,8 +59,8 @@ describe("buildPrompt", () => {
       ruleAreas: RULE_AREAS,
     });
     expect(built.system).toContain("HARD RULES");
-    expect(built.system).toContain("Do NOT quote or paraphrase");
-    expect(built.system).toContain("Do NOT include Slack mentions");
+    expect(built.system).toContain("Channel discussion is meaningful signal");
+    expect(built.system).toContain("Do NOT include names, Slack mentions");
     expect(built.system).toContain("ranking.ts:target_base_scores");
     expect(built.system).toContain("unknown");
     expect(built.system).toContain("new_tunable_needed");
