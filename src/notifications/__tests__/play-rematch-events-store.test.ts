@@ -9,7 +9,10 @@ import { createDatabase } from "../../storage/db";
 import {
   getLatestRematchEvent,
   insertPlayRematchEvent,
+  insertAngleEvent,
+  hasAngleTriggerRun,
   type RematchDecision,
+  type AngleDecision,
 } from "../play-rematch-events-store";
 
 let db: Database;
@@ -189,5 +192,124 @@ describe("getLatestRematchEvent", () => {
     const latest = getLatestRematchEvent(db, 7000, 3);
     expect(latest?.priorVideoUrl).toBeNull();
     expect(latest?.newVideoUrl).toBeNull();
+  });
+});
+
+describe("insertAngleEvent", () => {
+  test.each<AngleDecision>(["angle_found", "angle_no_alternate", "angle_error", "angle_deduped"])(
+    "accepts angle decision=%s",
+    (decision) => {
+      insertAngleEvent(db, {
+        gamePk: 1,
+        playIndex: 1,
+        userId: "U1",
+        decision,
+        agentReason: null,
+        eventTs: "1",
+      });
+      const row = db
+        .prepare("SELECT decision FROM play_rematch_events;")
+        .get() as { decision: string };
+      expect(row.decision).toBe(decision);
+    },
+  );
+
+  test("angle event persists with null prior/new video urls", () => {
+    insertAngleEvent(db, {
+      gamePk: 7000,
+      playIndex: 5,
+      userId: "U2",
+      decision: "angle_found",
+      agentReason: "cf angle uploaded",
+      eventTs: "1700000000.000300",
+    });
+    const row = db.prepare("SELECT * FROM play_rematch_events;").get() as {
+      game_pk: number;
+      play_index: number;
+      user_id: string;
+      prior_video_url: string | null;
+      new_video_url: string | null;
+      decision: string;
+      agent_reason: string | null;
+    };
+    expect(row).toMatchObject({
+      game_pk: 7000,
+      play_index: 5,
+      user_id: "U2",
+      prior_video_url: null,
+      new_video_url: null,
+      decision: "angle_found",
+      agent_reason: "cf angle uploaded",
+    });
+  });
+});
+
+describe("hasAngleTriggerRun", () => {
+  test("returns false when no events exist", () => {
+    expect(hasAngleTriggerRun(db, 7000, 3)).toBe(false);
+  });
+
+  test("returns false when only rematch events exist", () => {
+    insertPlayRematchEvent(db, {
+      gamePk: 7000,
+      playIndex: 3,
+      userId: "U1",
+      priorVideoUrl: "url-A",
+      newVideoUrl: "url-B",
+      decision: "swapped",
+      agentReason: null,
+      eventTs: "1",
+    });
+    expect(hasAngleTriggerRun(db, 7000, 3)).toBe(false);
+  });
+
+  test("returns true when a angle_found event exists", () => {
+    insertAngleEvent(db, {
+      gamePk: 7000,
+      playIndex: 3,
+      userId: "U1",
+      decision: "angle_found",
+      agentReason: null,
+      eventTs: "1",
+    });
+    expect(hasAngleTriggerRun(db, 7000, 3)).toBe(true);
+  });
+
+  test("returns true when a angle_no_alternate event exists", () => {
+    insertAngleEvent(db, {
+      gamePk: 7000,
+      playIndex: 3,
+      userId: "U1",
+      decision: "angle_no_alternate",
+      agentReason: null,
+      eventTs: "1",
+    });
+    expect(hasAngleTriggerRun(db, 7000, 3)).toBe(true);
+  });
+
+  test("returns true when a angle_deduped event exists", () => {
+    insertAngleEvent(db, {
+      gamePk: 7000,
+      playIndex: 3,
+      userId: "U1",
+      decision: "angle_deduped",
+      agentReason: null,
+      eventTs: "1",
+    });
+    expect(hasAngleTriggerRun(db, 7000, 3)).toBe(true);
+  });
+
+  test("isolates by (game_pk, play_index)", () => {
+    insertAngleEvent(db, {
+      gamePk: 7000,
+      playIndex: 3,
+      userId: "U1",
+      decision: "angle_found",
+      agentReason: null,
+      eventTs: "1",
+    });
+    expect(hasAngleTriggerRun(db, 7000, 3)).toBe(true);
+    expect(hasAngleTriggerRun(db, 7000, 4)).toBe(false);
+    expect(hasAngleTriggerRun(db, 7001, 3)).toBe(false);
   });
 });

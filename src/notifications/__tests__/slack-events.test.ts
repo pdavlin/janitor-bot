@@ -17,7 +17,8 @@ import {
 } from "bun:test";
 import { createHmac } from "node:crypto";
 import { Database } from "bun:sqlite";
-import { createDatabase } from "../../storage/db";
+import { createDatabase, insertPlay } from "../../storage/db";
+import type { DetectedPlay } from "../../types/play";
 import { recordPlayMessage } from "../slack-messages-store";
 import { recordFindingMessage } from "../slack-finding-messages-store";
 import {
@@ -140,6 +141,39 @@ describe("isDuplicateEvent", () => {
 // dispatchEvent
 // ---------------------------------------------------------------------------
 
+function makeAnglePlay(): DetectedPlay {
+  return {
+    gamePk: 7000,
+    playIndex: 3,
+    date: "2026-05-24",
+    fielderId: 660271,
+    fielderName: "Test Fielder",
+    fielderPosition: "RF",
+    runnerId: 100,
+    runnerName: "Test Runner",
+    targetBase: "3B",
+    batterName: "Test Batter",
+    inning: 5,
+    halfInning: "top",
+    awayScore: 2,
+    homeScore: 3,
+    awayTeam: "CHC",
+    homeTeam: "PHI",
+    description: "flies out to right fielder.",
+    creditChain: "RF -> 3B",
+    tier: "high",
+    outs: 1,
+    runnersOn: "1st",
+    isOverturned: false,
+    playId: "play-uuid-1",
+    fetchStatus: "success",
+    videoUrl: null,
+    videoTitle: null,
+    throwVelocity: null,
+    throwVelocityStatus: null,
+  };
+}
+
 describe("dispatchEvent", () => {
   let db: Database;
   let originalFetch: typeof fetch;
@@ -242,6 +276,50 @@ describe("dispatchEvent", () => {
     await dispatchEvent(makeEnvelope({ reaction: "thumbsup" }), ctx());
 
     expect(voteCount()).toBe(0);
+  });
+
+  test(":movie_camera: routes to the angle handler and records no vote", async () => {
+    recordPlayMessage(db, 7000, 3, "C1", "100.001", "99.000");
+    insertPlay(db, makeAnglePlay());
+
+    let angleCalled = 0;
+    const angleCtx = {
+      ...ctx(),
+      angle: { enabled: true, windowHours: 24 },
+      angleDeps: {
+        resolveAngle: async () => {
+          angleCalled++;
+          return { status: "no_alternate" as const };
+        },
+      },
+    };
+
+    await dispatchEvent(makeEnvelope({ reaction: "movie_camera" }), angleCtx);
+
+    expect(angleCalled).toBe(1); // routed to the angle flow
+    expect(voteCount()).toBe(0); // …and is not a vote
+  });
+
+  test(":fire: still votes and does NOT trigger the angle flow", async () => {
+    recordPlayMessage(db, 7000, 3, "C1", "100.001", "99.000");
+    insertPlay(db, makeAnglePlay());
+
+    let angleCalled = 0;
+    const angleCtx = {
+      ...ctx(),
+      angle: { enabled: true, windowHours: 24 },
+      angleDeps: {
+        resolveAngle: async () => {
+          angleCalled++;
+          return { status: "no_alternate" as const };
+        },
+      },
+    };
+
+    await dispatchEvent(makeEnvelope({ reaction: "fire" }), angleCtx);
+
+    expect(angleCalled).toBe(0); // fire is no longer the angle trigger
+    expect(voteCount()).toBe(1); // fire still records a vote
   });
 
   test("ignores reactions on unknown ts", async () => {

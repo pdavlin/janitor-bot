@@ -68,6 +68,10 @@ async function main(): Promise<void> {
       apiKey: config.anthropicApiKey,
       model: config.rematchAgentModel,
     },
+    angle: {
+      enabled: config.angleTriggerEnabled,
+      windowHours: config.angleTriggerWindowHours,
+    },
   });
 
   logger.info("http server started", { port: config.port });

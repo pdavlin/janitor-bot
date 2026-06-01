@@ -271,12 +271,45 @@ CREATE TABLE IF NOT EXISTS play_rematch_events (
   user_id          TEXT    NOT NULL,
   prior_video_url  TEXT,
   new_video_url    TEXT,
-  decision         TEXT    NOT NULL CHECK (decision IN ('swapped','agreed','no_match','deduped')),
+  decision         TEXT    NOT NULL CHECK (decision IN ('swapped','agreed','no_match','deduped','angle_found','angle_no_alternate','angle_error','angle_deduped')),
   agent_reason     TEXT,
   event_ts         TEXT    NOT NULL,
   received_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 `;
+
+/**
+ * Migrates the `play_rematch_events` CHECK constraint to allow the
+ * `angle_*` decision values.
+ *
+ * SQLite cannot ALTER a CHECK constraint in place, so a pre-existing table
+ * (created before angle decisions existed) is rebuilt: rename, recreate with
+ * the current schema, copy rows, drop the old table. Idempotent — skips when
+ * the table is absent or its CHECK already lists the angle decisions, so it
+ * is a no-op on fresh DBs and on re-runs.
+ */
+export function migratePlayRematchEventsCheck(db: Database): void {
+  const row = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='play_rematch_events';",
+    )
+    .get() as { sql: string } | null;
+  if (!row || row.sql.includes("angle_found")) return;
+
+  db.transaction(() => {
+    db.run("ALTER TABLE play_rematch_events RENAME TO play_rematch_events_old;");
+    db.run(CREATE_PLAY_REMATCH_EVENTS_TABLE_SQL);
+    db.run(`
+      INSERT INTO play_rematch_events
+        (id, game_pk, play_index, user_id, prior_video_url, new_video_url,
+         decision, agent_reason, event_ts, received_at)
+      SELECT id, game_pk, play_index, user_id, prior_video_url, new_video_url,
+         decision, agent_reason, event_ts, received_at
+      FROM play_rematch_events_old;
+    `);
+    db.run("DROP TABLE play_rematch_events_old;");
+  })();
+}
 
 const INSERT_PLAY_SQL = `
 INSERT INTO plays (
@@ -408,6 +441,8 @@ export function createDatabase(dbPath: string): Database {
   );
 
   db.run(CREATE_PLAY_REMATCH_EVENTS_TABLE_SQL);
+  // Rebuild a pre-angle table so the CHECK accepts angle_* decisions.
+  migratePlayRematchEventsCheck(db);
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_play_rematch_events_play ON play_rematch_events(game_pk, play_index, id DESC);",
   );

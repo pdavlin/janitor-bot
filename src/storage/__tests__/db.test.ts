@@ -22,6 +22,7 @@ import {
   updatePlayVideoByPlayKey,
   updatePlayFetchStatus,
   updatePlayId,
+  migratePlayRematchEventsCheck,
 } from "../db";
 import type { DetectedPlay, StoredPlay, PlayFilters } from "../db";
 
@@ -66,6 +67,66 @@ function makeMockPlay(overrides: Partial<DetectedPlay> = {}): DetectedPlay {
     ...overrides,
   };
 }
+
+// ---------------------------------------------------------------------------
+// play_rematch_events CHECK migration
+// ---------------------------------------------------------------------------
+
+describe("migratePlayRematchEventsCheck", () => {
+  // The pre-angle table CHECK: only the original :repeat: decisions.
+  const OLD_TABLE_SQL = `
+    CREATE TABLE play_rematch_events (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      game_pk          INTEGER NOT NULL,
+      play_index       INTEGER NOT NULL,
+      user_id          TEXT    NOT NULL,
+      prior_video_url  TEXT,
+      new_video_url    TEXT,
+      decision         TEXT    NOT NULL CHECK (decision IN ('swapped','agreed','no_match','deduped')),
+      agent_reason     TEXT,
+      event_ts         TEXT    NOT NULL,
+      received_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    );`;
+
+  function insertDecision(db: Database, decision: string): void {
+    db.prepare(
+      `INSERT INTO play_rematch_events (game_pk, play_index, user_id, decision, event_ts)
+       VALUES (7000, 3, 'U1', $d, '1.0');`,
+    ).run({ $d: decision });
+  }
+
+  test("rebuilds the old table to accept angle_* decisions, preserving rows", () => {
+    const db = new Database(":memory:");
+    db.run(OLD_TABLE_SQL);
+    insertDecision(db, "swapped"); // legacy row that must survive
+
+    // Sanity: the old CHECK rejects angle_* before migration.
+    expect(() => insertDecision(db, "angle_found")).toThrow();
+
+    migratePlayRematchEventsCheck(db);
+
+    // Legacy row preserved.
+    const count = (
+      db.prepare("SELECT COUNT(*) c FROM play_rematch_events;").get() as { c: number }
+    ).c;
+    expect(count).toBe(1);
+
+    // angle_* now accepted.
+    expect(() => insertDecision(db, "angle_found")).not.toThrow();
+    db.close();
+  });
+
+  test("is a no-op when the table already allows angle_* (idempotent)", () => {
+    const db = createDatabase(":memory:"); // fresh schema already has angle_*
+    insertDecision(db, "angle_deduped");
+    migratePlayRematchEventsCheck(db); // should not rebuild or throw
+    const count = (
+      db.prepare("SELECT COUNT(*) c FROM play_rematch_events;").get() as { c: number }
+    ).c;
+    expect(count).toBe(1);
+    db.close();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Throw velocity persistence
