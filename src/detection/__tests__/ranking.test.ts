@@ -145,6 +145,73 @@ describe("calculateTier", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Long relay penalty (run #7 finding 20: 4+ segment chains, operator-confirmed)
+  // -----------------------------------------------------------------------
+
+  test("long relay (4 segments) drops 3B from medium to low: 3B(3) + longRelay(-2) = 1", () => {
+    // Play 333 (LF -> SS -> C -> 3B, CWS@PHI) drew the week's only trash vote.
+    const tier = calculateTier({
+      targetBase: "3B",
+      creditChain: "LF -> SS -> C -> 3B",
+      hasVideo: false,
+      isOverturned: false,
+    });
+    expect(tier).toBe("low");
+  });
+
+  test("long relay (4 segments) with video still drops 3B to low: 3B(3) + video(1) + longRelay(-2) = 2", () => {
+    // The realistic play-333 shape: even with a matched video it lands low.
+    const tier = calculateTier({
+      targetBase: "3B",
+      creditChain: "LF -> SS -> C -> 3B",
+      hasVideo: true,
+      isOverturned: false,
+    });
+    expect(tier).toBe("low");
+  });
+
+  test("long relay (4 segments) drops Home from high to medium: Home(4) + video(1) + longRelay(-2) = 3", () => {
+    const tier = calculateTier({
+      targetBase: "Home",
+      creditChain: "RF -> 1B -> SS -> C",
+      hasVideo: true,
+      isOverturned: false,
+    });
+    expect(tier).toBe("medium");
+  });
+
+  test("single-cutoff relay (3 segments) is NOT penalized: relay to home stays medium", () => {
+    // Run #7 finding 17 (relay-to-Home as a class) was operator-rejected, so an
+    // ordinary one-intermediary cutoff must keep its existing tier.
+    const tier = calculateTier({
+      targetBase: "Home",
+      creditChain: "RF -> SS -> C",
+      hasVideo: false,
+      isOverturned: false,
+    });
+    expect(tier).toBe("medium");
+  });
+
+  test("direct throws are unaffected by the long-relay penalty", () => {
+    expect(
+      calculateTier({
+        targetBase: "Home",
+        creditChain: "CF -> C",
+        hasVideo: false,
+        isOverturned: false,
+      }),
+    ).toBe("high");
+    expect(
+      calculateTier({
+        targetBase: "3B",
+        creditChain: "RF -> 3B",
+        hasVideo: false,
+        isOverturned: false,
+      }),
+    ).toBe("high");
+  });
+
+  // -----------------------------------------------------------------------
   // Throw velocity bonus (FR-1.10: absent velocity contributes 0)
   // -----------------------------------------------------------------------
 
