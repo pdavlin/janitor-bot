@@ -42,11 +42,34 @@ function velocityBonus(mph: number | null | undefined): number {
 }
 
 /**
+ * Penalty for long relay chains.
+ *
+ * A credit chain of 4+ segments means two or more intermediaries between
+ * the outfielder and the tagging fielder (e.g. `LF -> SS -> C -> 3B`). The
+ * channel reacts negatively to these regardless of target base: in the
+ * weekly-review run for the week of 2026-05-31, the only trash vote of the
+ * week landed on the single 4-segment chain, and the relay-chain-length
+ * finding was operator-confirmed (run #7, finding 20).
+ *
+ * Scoped deliberately to 4+ segments only. Single-cutoff relays (3 segments,
+ * one intermediary) are NOT penalized, because the relay-to-Home finding for
+ * that same run was operator-rejected — the channel does not treat an ordinary
+ * cutoff relay as less impressive as a class.
+ *
+ * @param segmentCount - Number of fielders in the credit chain.
+ * @returns Penalty points (<= 0) to add to the tier score.
+ */
+function longRelayPenalty(segmentCount: number): number {
+  return segmentCount >= 4 ? -2 : 0;
+}
+
+/**
  * Calculate the tier for an outfield assist play based on throw impressiveness.
  *
  * Scoring breakdown:
  *   - Target base:  Home = 4, 3B = 3, 2B = 1
  *   - Direct throw (no relay, 2 segments in credit chain): 2
+ *   - Long relay chain (4+ segments, 2+ intermediaries): -2 (see longRelayPenalty)
  *   - Video available: 1
  *   - Out came via review overturn: -2 (community treats these as less impressive)
  *   - Throw velocity bonus: set from calibration analysis (see velocityBonus)
@@ -73,6 +96,9 @@ export function calculateTier(play: TierInput): Tier {
   if (segments.length === 2) {
     score += 2;
   }
+
+  // Long relay penalty: 4+ fielders means 2+ intermediaries (see longRelayPenalty)
+  score += longRelayPenalty(segments.length);
 
   // Video availability bonus
   if (play.hasVideo) {
