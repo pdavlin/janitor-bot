@@ -77,6 +77,13 @@ const STRENGTH_RUBRIC = `Evidence strength:
 - moderate: 4-6 plays
 - strong: 7+ plays`;
 
+const ADJUDICATED_AREAS_RULE = `Adjudicated rule areas (suppress repeats):
+- Before emitting a finding, call getHistoricalFindingOutcomes(suspected_rule_area, 8) and read the confirmed/rejected counts.
+- If an area has 0 confirmed and >= 2 rejected, the operator has ALREADY decided that class of pattern is not actionable. Do NOT emit another instance of it. A recurrence of an already-rejected pattern is noise, not new signal.
+- A run of rejections is a STOP signal, not corroboration. Never cite prior rejection counts as evidence that strengthens a finding.
+- Reopen such an area ONLY when the evidence is "strong" (7+ plays) AND describes a different mechanism than the rejected findings — not merely another quiet week in the same shape.
+- Findings that violate this are dropped before they reach the operator, so emitting them wastes the run.`;
+
 const TOOL_USE_GUIDE = `Tool use
 ========
 
@@ -119,6 +126,8 @@ function buildSystemPrompt(ruleAreas: readonly string[]): string {
     allowList,
     "Use \"unknown\" if you cannot confidently map the pattern.",
     "Use \"new_tunable_needed\" if the pattern points at a factor the bot doesn't currently weight.",
+    "",
+    ADJUDICATED_AREAS_RULE,
     "",
     TOOL_USE_GUIDE,
   ].join("\n");
