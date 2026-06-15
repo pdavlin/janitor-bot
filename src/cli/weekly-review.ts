@@ -27,6 +27,7 @@ import { buildPrompt, type BuiltPrompt } from "./weekly-review/prompt";
 import { callAgent, type AgentResult } from "./weekly-review/agent";
 import { WEEKLY_REVIEW_TOOLS } from "./weekly-review/tools";
 import { validateFindings, type ValidationResult } from "./weekly-review/validation";
+import { suppressAdjudicatedFindings } from "./weekly-review/graveyard";
 import { RULE_AREAS } from "./weekly-review/rule-areas";
 import {
   buildDump,
@@ -40,21 +41,15 @@ import {
   recordAgentTelemetry,
   runRetentionSweep,
   autoCloseStaleFindings,
-  getHitRate,
   resolveFinding,
   queryLastRunFindings,
 } from "./weekly-review/findings-store";
 import {
-  buildDigest,
-  buildInsufficientDigest,
-  buildEmptyDigest,
-  buildAllRejectedDigest,
   buildStatsOnlyDigest,
   byMinStrength,
   orderFindings,
   postDigest,
 } from "./weekly-review/digest";
-import { postFindingReplies } from "./weekly-review/post-finding-replies";
 import type { Outcome } from "./weekly-review/types";
 
 interface ParsedFlags {
@@ -328,12 +323,11 @@ async function runFull(
         playCount,
         voteCount,
       });
-      const message = buildInsufficientDigest(window, playCount, voteCount);
-      const ts = await postDigest(slackConfig, config.slackChannelId, message, logger);
-      recordAgentTelemetry(db, lock.runId, 0, 0, 0, ts?.ts ?? null, 0, {});
-      releaseStatus = ts ? "success" : "error";
-      if (!ts) releaseError = "slack post failed";
-      return ts ? 0 : 1;
+      // No group-channel post: insufficient-signal weeks are silent. The run
+      // still completes and records telemetry so the gate is observable.
+      recordAgentTelemetry(db, lock.runId, 0, 0, 0, null, 0, {});
+      releaseStatus = "success";
+      return 0;
     }
 
     const prompt = buildPrompt({
@@ -360,12 +354,16 @@ async function runFull(
       },
     );
 
-    const validated = validateFindings(agentResult.rawFindings, logger);
+    const validated = suppressAdjudicatedFindings(
+      validateFindings(agentResult.rawFindings, logger),
+      db,
+      logger,
+    );
     const ordered = orderFindings(validated.accepted).filter(
       byMinStrength(flags.minStrength),
     );
 
-    const findingIds = persistFindings(db, lock.runId, ordered);
+    persistFindings(db, lock.runId, ordered);
 
     let dumpPath: string | null = null;
     if (flags.dump) {
@@ -383,49 +381,18 @@ async function runFull(
       });
     }
 
-    const hitRate = getHitRate(db);
-    const message =
-      ordered.length > 0
-        ? buildDigest({
-            window,
-            baseline,
-            findings: ordered,
-            hitRate,
-          })
-        : validated.rejected.length > 0
-          ? buildAllRejectedDigest(window, baseline, hitRate, validated.rejected.length)
-          : buildEmptyDigest(window, baseline, hitRate);
-
-    const ts = await postDigest(slackConfig, config.slackChannelId, message, logger);
-    if (!ts) {
-      releaseError = "slack post failed";
-      return 1;
-    }
-
-    if (ordered.length > 0) {
-      try {
-        await postFindingReplies(
-          db,
-          slackConfig,
-          { channel: config.slackChannelId, ts: ts.ts, runId: lock.runId },
-          ordered,
-          findingIds,
-          logger,
-        );
-      } catch (err) {
-        logger.warn("post-finding replies failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
+    // Group-channel digest and threaded per-finding replies were removed:
+    // the weekly findings message drew zero engagement and went unread.
+    // Findings are persisted above and surfaced to the operator via the
+    // dump_captured / all_findings_rejected DMs below; resolution is the
+    // `--resolve` CLI. No `posted_message_ts` exists, so telemetry stores null.
     recordAgentTelemetry(
       db,
       lock.runId,
       agentResult.inputTokens,
       agentResult.outputTokens,
       agentResult.estimatedCostUsd,
-      ts.ts,
+      null,
       agentResult.toolCallCount,
       agentResult.toolCallBreakdown,
     );
@@ -601,7 +568,11 @@ async function runDryRun(
       toolContext: { db, logger },
     },
   );
-  const validated = validateFindings(result.rawFindings, logger);
+  const validated = suppressAdjudicatedFindings(
+    validateFindings(result.rawFindings, logger),
+    db,
+    logger,
+  );
   process.stdout.write(
     JSON.stringify(
       {

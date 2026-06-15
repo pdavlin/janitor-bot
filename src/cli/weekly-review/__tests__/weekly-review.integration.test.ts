@@ -157,7 +157,7 @@ afterEach(() => {
 });
 
 describe("weekly-review CLI integration", () => {
-  test("full run posts a digest and persists findings", async () => {
+  test("full run persists findings without posting a group digest", async () => {
     globalThis.fetch = mock(async (input: URL | RequestInfo, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.includes("slack.com/api/auth.test")) {
@@ -229,7 +229,9 @@ describe("weekly-review CLI integration", () => {
       output_tokens: number | null;
     };
     expect(run.status).toBe("success");
-    expect(run.posted_message_ts).toBe("1700000000.999999");
+    // The group digest was removed; no channel message is posted, so there
+    // is no ts to record.
+    expect(run.posted_message_ts).toBeNull();
     expect(run.input_tokens).toBe(1500);
     expect(run.output_tokens).toBe(200);
 
@@ -240,7 +242,7 @@ describe("weekly-review CLI integration", () => {
     verifyDb.close();
   }, 15_000);
 
-  test("insufficient data path posts the gate message and skips the LLM", async () => {
+  test("insufficient data path skips the LLM and posts nothing", async () => {
     // Wipe the seed and insert just two plays (under the 5-play threshold)
     const db = new Database(dbPath);
     db.run(`DELETE FROM plays;`);
@@ -250,7 +252,8 @@ describe("weekly-review CLI integration", () => {
     db.close();
 
     let anthropicCalled = false;
-    globalThis.fetch = mock(async (input: URL | RequestInfo) => {
+    const chatPostsTo: string[] = [];
+    globalThis.fetch = mock(async (input: URL | RequestInfo, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.includes("slack.com/api/auth.test")) {
         return jsonResponse({ ok: true, user_id: BOT_USER_ID });
@@ -259,7 +262,11 @@ describe("weekly-review CLI integration", () => {
         return jsonResponse({ ok: true, messages: [] });
       }
       if (url.includes("slack.com/api/chat.postMessage")) {
-        return jsonResponse({ ok: true, channel: "C123", ts: "1700000001.000001" });
+        const body = init?.body
+          ? (JSON.parse(init.body.toString()) as { channel: string })
+          : { channel: "?" };
+        chatPostsTo.push(body.channel);
+        return jsonResponse({ ok: true, channel: body.channel, ts: "1700000001.000001" });
       }
       if (url.includes("api.anthropic.com")) {
         anthropicCalled = true;
@@ -274,6 +281,8 @@ describe("weekly-review CLI integration", () => {
     ]);
     expect(exitCode).toBe(0);
     expect(anthropicCalled).toBe(false);
+    // The gate no longer posts a "not enough data" message to the channel.
+    expect(chatPostsTo).toEqual([]);
 
     const verifyDb = new Database(dbPath);
     const run = verifyDb
@@ -343,8 +352,8 @@ describe("weekly-review CLI integration", () => {
     ]);
     expect(exitCode).toBe(0);
 
-    expect(chatPostsTo).toContain("C123");
-    expect(chatPostsTo).toContain("U07OPERATOR");
+    // No group digest is posted; the only chat.postMessage is the operator DM.
+    expect(chatPostsTo).toEqual(["U07OPERATOR"]);
   }, 15_000);
 
   test("without OPERATOR_USER_ID, no DM is sent even with --dump", async () => {
@@ -390,8 +399,8 @@ describe("weekly-review CLI integration", () => {
       dumpDir,
     ]);
     expect(exitCode).toBe(0);
-    // Channel post landed; nothing else.
-    expect(chatPostsTo).toEqual(["C123"]);
+    // No channel digest and no operator DM (no OPERATOR_USER_ID): nothing posts.
+    expect(chatPostsTo).toEqual([]);
   }, 15_000);
 
   test("full run dispatches a getVoteSnapshot tool call and persists tool telemetry", async () => {
