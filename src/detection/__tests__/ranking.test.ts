@@ -4,6 +4,7 @@
  * Scoring breakdown:
  *   Target base:  Home = 4, 3B = 3, 2B = 1
  *   Direct throw (2 segments): 2
+ *   Relay chain (3+ segments): -2
  *   Video available: 1
  *   Overturned (replay reversal): -2
  *
@@ -34,24 +35,24 @@ describe("calculateTier", () => {
     expect(tier).toBe("high");
   });
 
-  test("medium tier - relay throw to home plate: Home(4) + relay(0) = 4", () => {
+  test("low tier - relay throw to home plate: Home(4) + relay(-2) = 2", () => {
     const tier = calculateTier({
       targetBase: "Home",
       creditChain: "RF -> SS -> C",
       hasVideo: false,
       isOverturned: false,
     });
-    expect(tier).toBe("medium");
+    expect(tier).toBe("low");
   });
 
-  test("medium tier - relay throw to 3B: 3B(3) + relay(0) = 3", () => {
+  test("low tier - relay throw to 3B: 3B(3) + relay(-2) = 1", () => {
     const tier = calculateTier({
       targetBase: "3B",
       creditChain: "LF -> SS -> 3B",
       hasVideo: false,
       isOverturned: false,
     });
-    expect(tier).toBe("medium");
+    expect(tier).toBe("low");
   });
 
   test("medium tier - direct throw to 2B: 2B(1) + direct(2) = 3", () => {
@@ -74,17 +75,17 @@ describe("calculateTier", () => {
     expect(tier).toBe("low");
   });
 
-  test("video bonus promotes relay to home from medium to high: Home(4) + relay(0) + video(1) = 5", () => {
+  test("video bonus leaves relay to home at medium: Home(4) + relay(-2) + video(1) = 3", () => {
     const tier = calculateTier({
       targetBase: "Home",
       creditChain: "RF -> SS -> C",
       hasVideo: true,
       isOverturned: false,
     });
-    expect(tier).toBe("high");
+    expect(tier).toBe("medium");
   });
 
-  test("video bonus promotes relay to 2B from low to low: 2B(1) + relay(0) + video(1) = 2", () => {
+  test("video bonus leaves relay to 2B at low: 2B(1) + relay(-2) + video(1) = 0", () => {
     const tier = calculateTier({
       targetBase: "2B",
       creditChain: "RF -> SS -> 2B",
@@ -94,14 +95,14 @@ describe("calculateTier", () => {
     expect(tier).toBe("low");
   });
 
-  test("video bonus promotes relay to 3B from medium to medium: 3B(3) + relay(0) + video(1) = 4", () => {
+  test("video bonus leaves relay to 3B at low: 3B(3) + relay(-2) + video(1) = 2", () => {
     const tier = calculateTier({
       targetBase: "3B",
       creditChain: "LF -> SS -> 3B",
       hasVideo: true,
       isOverturned: false,
     });
-    expect(tier).toBe("medium");
+    expect(tier).toBe("low");
   });
 
   test("overturn penalty drops direct throw to 3B from high to medium: 3B(3) + direct(2) - overturn(2) = 3", () => {
@@ -145,7 +146,9 @@ describe("calculateTier", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Long relay penalty (run #7 finding 20: 4+ segment chains, operator-confirmed)
+  // Relay penalty (3+ segment chains). Originally 4+ only (run #7 finding 20);
+  // extended to 3+ after a six-week engagement aggregate showed all relays are
+  // unloved (0.00-0.05 fire/play) and absorb most trash votes.
   // -----------------------------------------------------------------------
 
   test("long relay (4 segments) drops 3B from medium to low: 3B(3) + longRelay(-2) = 1", () => {
@@ -180,19 +183,19 @@ describe("calculateTier", () => {
     expect(tier).toBe("medium");
   });
 
-  test("single-cutoff relay (3 segments) is NOT penalized: relay to home stays medium", () => {
-    // Run #7 finding 17 (relay-to-Home as a class) was operator-rejected, so an
-    // ordinary one-intermediary cutoff must keep its existing tier.
+  test("single-cutoff relay (3 segments) IS penalized: relay to home drops to low", () => {
+    // The six-week aggregate reversed run #7 finding 17: a one-intermediary
+    // cutoff to Home is penalized like any other relay. Home(4) + relay(-2) = 2.
     const tier = calculateTier({
       targetBase: "Home",
       creditChain: "RF -> SS -> C",
       hasVideo: false,
       isOverturned: false,
     });
-    expect(tier).toBe("medium");
+    expect(tier).toBe("low");
   });
 
-  test("direct throws are unaffected by the long-relay penalty", () => {
+  test("direct throws are unaffected by the relay penalty", () => {
     expect(
       calculateTier({
         targetBase: "Home",
@@ -215,10 +218,10 @@ describe("calculateTier", () => {
   // Throw velocity bonus (FR-1.10: absent velocity contributes 0)
   // -----------------------------------------------------------------------
 
-  test("absent velocity (undefined) contributes 0: relay to 3B stays medium", () => {
+  test("absent velocity (undefined) contributes 0: direct to 2B stays medium", () => {
     const tier = calculateTier({
-      targetBase: "3B",
-      creditChain: "LF -> SS -> 3B",
+      targetBase: "2B",
+      creditChain: "CF -> 2B",
       hasVideo: false,
       isOverturned: false,
       throwVelocity: undefined,
@@ -226,10 +229,10 @@ describe("calculateTier", () => {
     expect(tier).toBe("medium");
   });
 
-  test("absent velocity (null) contributes 0: relay to 3B stays medium", () => {
+  test("absent velocity (null) contributes 0: direct to 2B stays medium", () => {
     const tier = calculateTier({
-      targetBase: "3B",
-      creditChain: "LF -> SS -> 3B",
+      targetBase: "2B",
+      creditChain: "CF -> 2B",
       hasVideo: false,
       isOverturned: false,
       throwVelocity: null,
@@ -237,10 +240,10 @@ describe("calculateTier", () => {
     expect(tier).toBe("medium");
   });
 
-  test("low velocity (< 95) contributes 0: relay to 3B stays medium", () => {
+  test("low velocity (< 95) contributes 0: direct to 2B stays medium", () => {
     const tier = calculateTier({
-      targetBase: "3B",
-      creditChain: "LF -> SS -> 3B",
+      targetBase: "2B",
+      creditChain: "CF -> 2B",
       hasVideo: false,
       isOverturned: false,
       throwVelocity: 88.5,
@@ -248,10 +251,10 @@ describe("calculateTier", () => {
     expect(tier).toBe("medium");
   });
 
-  test("high velocity (>= 95) adds +1: relay to 3B (3) + velocity(1) = 4 -> medium (no tier change)", () => {
+  test("high velocity (>= 95) adds +1: direct to 2B (3) + velocity(1) = 4 -> medium (no tier change)", () => {
     const tier = calculateTier({
-      targetBase: "3B",
-      creditChain: "LF -> SS -> 3B",
+      targetBase: "2B",
+      creditChain: "CF -> 2B",
       hasVideo: false,
       isOverturned: false,
       throwVelocity: 96.2,
@@ -259,15 +262,15 @@ describe("calculateTier", () => {
     expect(tier).toBe("medium");
   });
 
-  test("high velocity promotes borderline: relay to 2B (1) + video(1) + velocity(1) = 3 -> medium", () => {
+  test("high velocity promotes borderline: direct to 2B (3) + video(1) + velocity(1) = 5 -> high", () => {
     const tier = calculateTier({
       targetBase: "2B",
-      creditChain: "CF -> SS -> 2B",
+      creditChain: "CF -> 2B",
       hasVideo: true,
       isOverturned: false,
       throwVelocity: 97.0,
     });
-    expect(tier).toBe("medium");
+    expect(tier).toBe("high");
   });
 
   test("velocity regression: same inputs without velocity yields original tier", () => {

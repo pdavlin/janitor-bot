@@ -42,25 +42,28 @@ function velocityBonus(mph: number | null | undefined): number {
 }
 
 /**
- * Penalty for long relay chains.
+ * Penalty for relay chains.
  *
- * A credit chain of 4+ segments means two or more intermediaries between
- * the outfielder and the tagging fielder (e.g. `LF -> SS -> C -> 3B`). The
- * channel reacts negatively to these regardless of target base: in the
- * weekly-review run for the week of 2026-05-31, the only trash vote of the
- * week landed on the single 4-segment chain, and the relay-chain-length
- * finding was operator-confirmed (run #7, finding 20).
+ * Any credit chain of 3+ segments means at least one intermediary between
+ * the outfielder and the tagging fielder (e.g. `RF -> SS -> C`). A six-week
+ * engagement aggregate (weeks 2026-05-03 through 2026-06-14) showed relays
+ * are dead across every target base: 0.00–0.05 fire/play versus 0.20–0.80
+ * for direct throws to the same base, and relays absorbed the large majority
+ * of the period's trash votes. Relay-to-Home was the worst offender — 11 of
+ * 19 classified high, yet net-negative engagement.
  *
- * Scoped deliberately to 4+ segments only. Single-cutoff relays (3 segments,
- * one intermediary) are NOT penalized, because the relay-to-Home finding for
- * that same run was operator-rejected — the channel does not treat an ordinary
- * cutoff relay as less impressive as a class.
+ * Originally scoped to 4+ segments only (run #7 finding 20, operator-
+ * confirmed), with 3-segment cutoffs deliberately excluded because the
+ * relay-to-Home-as-a-class finding for that run was rejected on a single
+ * week's evidence (run #7 finding 17). The six-week aggregate reverses that:
+ * single-cutoff relays are penalized too, since the class is consistently
+ * unloved, not just the 4-segment tail.
  *
  * @param segmentCount - Number of fielders in the credit chain.
  * @returns Penalty points (<= 0) to add to the tier score.
  */
 function longRelayPenalty(segmentCount: number): number {
-  return segmentCount >= 4 ? -2 : 0;
+  return segmentCount >= 3 ? -2 : 0;
 }
 
 /**
@@ -69,7 +72,7 @@ function longRelayPenalty(segmentCount: number): number {
  * Scoring breakdown:
  *   - Target base:  Home = 4, 3B = 3, 2B = 1
  *   - Direct throw (no relay, 2 segments in credit chain): 2
- *   - Long relay chain (4+ segments, 2+ intermediaries): -2 (see longRelayPenalty)
+ *   - Relay chain (3+ segments, 1+ intermediary): -2 (see longRelayPenalty)
  *   - Video available: 1
  *   - Out came via review overturn: -2 (community treats these as less impressive)
  *   - Throw velocity bonus: set from calibration analysis (see velocityBonus)
@@ -97,7 +100,7 @@ export function calculateTier(play: TierInput): Tier {
     score += 2;
   }
 
-  // Long relay penalty: 4+ fielders means 2+ intermediaries (see longRelayPenalty)
+  // Relay penalty: 3+ fielders means 1+ intermediary (see longRelayPenalty)
   score += longRelayPenalty(segments.length);
 
   // Video availability bonus

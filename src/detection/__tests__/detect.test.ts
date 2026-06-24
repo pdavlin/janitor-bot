@@ -251,6 +251,21 @@ describe("detectOutfieldAssists", () => {
     expect(results).toHaveLength(0);
   });
 
+  test("ignores throws to 1B (not a janitor: routine force out / float to first)", () => {
+    const credits = [
+      makeCredit("f_assist_of", "9", "RF", 500),
+      makeCredit("f_putout", "3", "1B", 502),
+    ];
+    const runner = makeRunner({ isOut: true, outBase: "1B", credits });
+    const play = makePlay([runner]);
+    const feed = makeLiveFeed([play], {
+      500: { fullName: "Ichiro Suzuki", posCode: "9", posAbbrev: "RF" },
+    });
+
+    const results = detectOutfieldAssists(feed, 12345, "2025-06-15");
+    expect(results).toHaveLength(0);
+  });
+
   test("detects multiple outfield assists in one game", () => {
     // First play: RF throws out runner at home
     const credits1 = [
