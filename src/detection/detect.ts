@@ -176,6 +176,14 @@ export function detectOutfieldAssists(
       if (!assistCredit) continue;
 
       const targetBase = normalizeBase(runner.movement.outBase);
+
+      // Skip throws to 1B. Across six weeks of weekly-review data (2026-05-03
+      // to 2026-06-14) every 1B-target play drew zero fire and zero trash
+      // votes (6 plays, 0 reactions), and the channel explicitly flags them
+      // as "not a janitor" — routine force outs or a fielder floating it to
+      // first. They are not impressive outfield assists worth surfacing.
+      if (targetBase === "1B") continue;
+
       const creditChain = buildCreditChain(runner.credits ?? []);
       const outs = play.count?.outs ?? 0;
       const runnersOn = formatRunnersOn(play.runners);

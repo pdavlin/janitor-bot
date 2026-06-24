@@ -71,18 +71,18 @@ describe("backfill-target-base-home", () => {
     expect(recomputed!.changed).toBe(true);
   });
 
-  test("recomputeTiers keeps a relay 4B (3-segment chain) at medium (4 + 0 = 4)", () => {
+  test("recomputeTiers drops a relay 4B (3-segment chain) to low (4 - 2 = 2)", () => {
     const row = {
       id: 1,
       game_pk: 100,
       play_index: 1,
       credit_chain: "LF -> SS -> C",
       video_url: null,
-      tier: "low" as const,
+      tier: "medium" as const,
     };
     const [recomputed] = recomputeTiers([row]);
-    // 4 (Home) + 0 (relay, not direct) + 0 (no video) = 4 -> medium
-    expect(recomputed!.newTier).toBe("medium");
+    // 4 (Home) + relay(-2) + 0 (no video) = 2 -> low
+    expect(recomputed!.newTier).toBe("low");
     expect(recomputed!.changed).toBe(true);
   });
 
@@ -96,8 +96,8 @@ describe("backfill-target-base-home", () => {
       tier: "low" as const,
     };
     const [recomputed] = recomputeTiers([row]);
-    // 4 (Home) + 0 (relay) + 1 (video) = 5 -> high
-    expect(recomputed!.newTier).toBe("high");
+    // 4 (Home) + relay(-2) + 1 (video) = 3 -> medium
+    expect(recomputed!.newTier).toBe("medium");
   });
 
   test("applyMigration writes target_base='Home' and the recomputed tier", () => {
