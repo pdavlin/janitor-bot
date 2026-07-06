@@ -77,6 +77,11 @@ const STRENGTH_RUBRIC = `Evidence strength:
 - moderate: 4-6 plays
 - strong: 7+ plays`;
 
+const NUMERIC_RULE = `Numeric discipline (findings with wrong numbers are useless):
+- Every vote count stated in a description MUST match the baseline totals or a tool-call result exactly. The baseline byTier fire/trash totals are ground truth for week-level totals — recount against them before writing.
+- evidence_play_ids MUST be exactly the plays whose data supports the numeric claim: do not include zero-vote plays in a list said to "account for" votes, and do not omit plays that received the votes you are counting.
+- If your final list disagrees with your own tool-call results, the tool results win. Re-derive the list from them.`;
+
 const ADJUDICATED_AREAS_RULE = `Adjudicated rule areas (suppress repeats):
 - Before emitting a finding, call getHistoricalFindingOutcomes(suspected_rule_area, 8) and read the confirmed/rejected counts.
 - If an area has 0 confirmed and >= 2 rejected, the operator has ALREADY decided that class of pattern is not actionable. Do NOT emit another instance of it. A recurrence of an already-rejected pattern is noise, not new signal.
@@ -121,6 +126,8 @@ function buildSystemPrompt(ruleAreas: readonly string[]): string {
     SEVERITY_RUBRIC,
     "",
     STRENGTH_RUBRIC,
+    "",
+    NUMERIC_RULE,
     "",
     "Allow-list for suspected_rule_area (pick the closest match):",
     allowList,
