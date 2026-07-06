@@ -23,6 +23,7 @@ import { createLogger } from "../src/logger";
 import { callAgent } from "../src/cli/weekly-review/agent";
 import { WEEKLY_REVIEW_TOOLS } from "../src/cli/weekly-review/tools";
 import { validateFindings } from "../src/cli/weekly-review/validation";
+import { suppressAdjudicatedFindings } from "../src/cli/weekly-review/graveyard";
 import { readDump, type DumpRecord } from "../src/cli/weekly-review/dump";
 import type { Finding } from "../src/cli/weekly-review/types";
 import { createDatabase } from "../src/storage/db";
@@ -162,17 +163,29 @@ async function main(): Promise<void> {
       `user_override=${userOverride ? "yes" : "no"}\n\n`,
   );
 
-  // Tool calls during replay run against the operator's local DB (DB_PATH
-  // env) when set; otherwise an in-memory DB so tools return not_found
-  // cleanly. The replay script never writes to the DB.
-  const dbPath = process.env.DB_PATH ?? ":memory:";
+  // Tool calls during replay run against the same DB the production run
+  // would use: DB_PATH when set, else ./janitor-throws.db when present.
+  // Falls back to an in-memory DB (tools return not_found cleanly) so a
+  // checkout without a database can still replay. Never writes to the DB.
+  const defaultDbPath = "./janitor-throws.db";
+  const dbPath =
+    process.env.DB_PATH ??
+    ((await Bun.file(defaultDbPath).exists()) ? defaultDbPath : ":memory:");
+  process.stdout.write(`  db: ${dbPath}\n\n`);
   const db = createDatabase(dbPath);
 
   const result = await callAgent(apiKey, model, replayPrompt, logger, undefined, {
     tools: WEEKLY_REVIEW_TOOLS,
     toolContext: { db, logger },
   });
-  const validated = validateFindings(result.rawFindings, logger);
+  // Same pipeline as the production run: shape/privacy validation, then
+  // the graveyard backstop. With an in-memory DB the graveyard finds no
+  // history and suppresses nothing.
+  const validated = suppressAdjudicatedFindings(
+    validateFindings(result.rawFindings, logger),
+    db,
+    logger,
+  );
 
   const original = summarize(dump.validated.accepted);
   const replay = summarize(validated.accepted);
@@ -181,6 +194,15 @@ async function main(): Promise<void> {
   process.stdout.write("\n");
   process.stdout.write(formatCard("REPLAY accepted", replay));
   process.stdout.write("\n");
+
+  if (validated.rejected.length > 0) {
+    const lines = validated.rejected.map(
+      (r) => `  • ${r.finding_type} — ${r.reason}`,
+    );
+    process.stdout.write(
+      `REPLAY rejected (${validated.rejected.length}):\n${lines.join("\n")}\n\n`,
+    );
+  }
 
   if (args.showDescriptions) {
     process.stdout.write("REPLAY descriptions:\n");
