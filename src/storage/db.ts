@@ -795,13 +795,15 @@ export interface TeamBurnCount {
 /**
  * Plays per ISO week (Monday-based). `date(d, '-6 days', 'weekday 1')`
  * maps any date to the Monday of its ISO week: step back six days, then
- * forward to the next Monday.
+ * forward to the next Monday. Rows whose date SQLite cannot parse
+ * (week_start NULL) are excluded rather than crashing the page.
  */
 export function queryWeeklyCounts(db: Database): WeeklyCount[] {
   const rows = db
     .prepare(
       `SELECT date(date, '-6 days', 'weekday 1') AS week_start, COUNT(*) AS count
-       FROM plays GROUP BY week_start ORDER BY week_start ASC;`,
+       FROM plays GROUP BY week_start HAVING week_start IS NOT NULL
+       ORDER BY week_start ASC;`,
     )
     .all() as { week_start: string; count: number }[];
   return rows.map((r) => ({ weekStart: r.week_start, count: r.count }));
