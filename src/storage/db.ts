@@ -743,6 +743,206 @@ export function queryPlayStats(db: Database, from?: string, to?: string): PlaySt
   };
 }
 
+// ---------------------------------------------------------------------------
+// Website aggregates (batch 1)
+// ---------------------------------------------------------------------------
+
+/** Plays grouped by ISO week (weeks start on Monday). */
+export interface WeeklyCount {
+  /** Monday of the ISO week, YYYY-MM-DD. */
+  weekStart: string;
+  count: number;
+}
+
+/** Plays grouped by tier, in fixed high → medium → low order. */
+export interface TierCount {
+  tier: Tier;
+  count: number;
+}
+
+/** Plays grouped by target base, most common first. */
+export interface BaseCount {
+  base: string;
+  count: number;
+}
+
+/** Direct vs relay split for a single target base. */
+export interface BaseThrowMix {
+  base: string;
+  /** Plays whose credit chain has exactly one throw (e.g. "RF -> C"). */
+  direct: number;
+  /** Plays whose credit chain has 2+ throws (e.g. "RF -> SS -> C"). */
+  relay: number;
+}
+
+/** One row of the arm leaderboard. */
+export interface FielderLeader {
+  fielderName: string;
+  /** The position this fielder recorded the most assists from. */
+  position: string;
+  total: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+/** Runners cut down, counted by the runner's (batting) team. */
+export interface TeamBurnCount {
+  team: string;
+  count: number;
+}
+
+/**
+ * Plays per ISO week (Monday-based). `date(d, '-6 days', 'weekday 1')`
+ * maps any date to the Monday of its ISO week: step back six days, then
+ * forward to the next Monday.
+ */
+export function queryWeeklyCounts(db: Database): WeeklyCount[] {
+  const rows = db
+    .prepare(
+      `SELECT date(date, '-6 days', 'weekday 1') AS week_start, COUNT(*) AS count
+       FROM plays GROUP BY week_start ORDER BY week_start ASC;`,
+    )
+    .all() as { week_start: string; count: number }[];
+  return rows.map((r) => ({ weekStart: r.week_start, count: r.count }));
+}
+
+/**
+ * Play counts per tier in fixed high → medium → low order.
+ * Tiers with no plays are included with a count of 0.
+ */
+export function queryTierCounts(db: Database): TierCount[] {
+  const rows = db
+    .prepare("SELECT tier, COUNT(*) AS count FROM plays GROUP BY tier;")
+    .all() as { tier: Tier; count: number }[];
+  const byTier = new Map(rows.map((r) => [r.tier, r.count]));
+  const order: Tier[] = ["high", "medium", "low"];
+  return order.map((tier) => ({ tier, count: byTier.get(tier) ?? 0 }));
+}
+
+/**
+ * Play counts per target base, most common first. Includes any base value
+ * present in the data (e.g. legacy 1B rows), not just 2B/3B/Home.
+ */
+export function queryTargetBaseCounts(db: Database): BaseCount[] {
+  const rows = db
+    .prepare(
+      `SELECT target_base, COUNT(*) AS count FROM plays
+       GROUP BY target_base ORDER BY count DESC, target_base ASC;`,
+    )
+    .all() as { target_base: string; count: number }[];
+  return rows.map((r) => ({ base: r.target_base, count: r.count }));
+}
+
+/**
+ * Direct vs relay throw counts per target base, ordered by total plays
+ * descending. A chain is direct when it contains exactly one " -> "
+ * separator (two fielders); anything longer is a relay.
+ */
+export function queryDirectRelayByBase(db: Database): BaseThrowMix[] {
+  const rows = db
+    .prepare(
+      `SELECT target_base,
+         SUM(CASE WHEN (length(credit_chain) - length(replace(credit_chain, ' -> ', ''))) / 4 = 1
+             THEN 1 ELSE 0 END) AS direct,
+         SUM(CASE WHEN (length(credit_chain) - length(replace(credit_chain, ' -> ', ''))) / 4 = 1
+             THEN 0 ELSE 1 END) AS relay
+       FROM plays
+       GROUP BY target_base ORDER BY COUNT(*) DESC, target_base ASC;`,
+    )
+    .all() as { target_base: string; direct: number; relay: number }[];
+  return rows.map((r) => ({ base: r.target_base, direct: r.direct, relay: r.relay }));
+}
+
+/**
+ * Top fielders by assist count with per-tier splits. Position is the one
+ * the fielder recorded the most assists from (ties broken alphabetically).
+ */
+export function queryArmLeaderboard(db: Database, limit = 10): FielderLeader[] {
+  const rows = db
+    .prepare(
+      `SELECT fielder_name,
+         (SELECT p2.fielder_position FROM plays p2
+          WHERE p2.fielder_name = p.fielder_name
+          GROUP BY p2.fielder_position
+          ORDER BY COUNT(*) DESC, p2.fielder_position ASC LIMIT 1) AS position,
+         COUNT(*) AS total,
+         SUM(CASE WHEN tier = 'high' THEN 1 ELSE 0 END) AS high,
+         SUM(CASE WHEN tier = 'medium' THEN 1 ELSE 0 END) AS medium,
+         SUM(CASE WHEN tier = 'low' THEN 1 ELSE 0 END) AS low
+       FROM plays p
+       GROUP BY fielder_name
+       ORDER BY total DESC, fielder_name ASC
+       LIMIT $limit;`,
+    )
+    .all({ $limit: limit }) as {
+      fielder_name: string;
+      position: string;
+      total: number;
+      high: number;
+      medium: number;
+      low: number;
+    }[];
+  return rows.map((r) => ({
+    fielderName: r.fielder_name,
+    position: r.position,
+    total: r.total,
+    high: r.high,
+    medium: r.medium,
+    low: r.low,
+  }));
+}
+
+/**
+ * Teams whose runners were cut down the most. The runner's team is the
+ * batting side: the away team in the top half, the home team in the bottom.
+ */
+export function queryTeamsMostBurned(db: Database, limit = 10): TeamBurnCount[] {
+  const rows = db
+    .prepare(
+      `SELECT CASE half_inning WHEN 'top' THEN away_team ELSE home_team END AS team,
+         COUNT(*) AS count
+       FROM plays
+       GROUP BY team ORDER BY count DESC, team ASC
+       LIMIT $limit;`,
+    )
+    .all({ $limit: limit }) as { team: string; count: number }[];
+  return rows;
+}
+
+/**
+ * Most recent high-tier plays that have a video clip, newest first.
+ * Used by the home page's "recent highlights" section.
+ */
+export function queryRecentHighTierPlays(db: Database, limit = 3): StoredPlay[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM plays
+       WHERE tier = 'high' AND video_url IS NOT NULL
+       ORDER BY date DESC, id DESC
+       LIMIT $limit;`,
+    )
+    .all({ $limit: limit }) as PlayRow[];
+  return rows.map(rowToStoredPlay);
+}
+
+/**
+ * Every distinct team abbreviation present in the plays table (home or
+ * away), sorted alphabetically. Used by the highlights filter form.
+ */
+export function queryDistinctTeams(db: Database): string[] {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT team FROM (
+         SELECT away_team AS team FROM plays
+         UNION
+         SELECT home_team AS team FROM plays
+       ) ORDER BY team ASC;`,
+    )
+    .all() as { team: string }[];
+  return rows.map((r) => r.team);
+}
+
 /**
  * A play that is eligible for a Savant video backfill attempt.
  *
