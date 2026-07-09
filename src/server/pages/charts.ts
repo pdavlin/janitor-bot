@@ -124,7 +124,7 @@ export function renderWeeklyChart(weeks: ChartRow[], ariaLabel: string): string 
     }
     if (i === peak) {
       parts.push(
-        `<text x="${fmt(x + barW / 2)}" y="${fmt(y(w.value) - 6)}" text-anchor="middle" font-size="11" fill="var(--color-text)" font-variant-numeric="tabular-nums">${w.value}</text>`,
+        `<text x="${fmt(x + barW / 2)}" y="${fmt(y(w.value) - 6)}" text-anchor="middle" font-size="11" class="t-ink" font-variant-numeric="tabular-nums">${w.value}</text>`,
       );
     }
   });
@@ -171,9 +171,9 @@ export function renderHBarChart(
     const yTop = cy - barH / 2;
     parts.push(
       `<circle cx="10" cy="${fmt(cy)}" r="4" fill="${row.color}"/>`,
-      `<text x="20" y="${fmt(cy + 3.5)}" text-anchor="start" font-size="11" fill="var(--color-text)">${escapeHtml(row.label)}</text>`,
+      `<text x="20" y="${fmt(cy + 3.5)}" text-anchor="start" font-size="11" class="t-ink">${escapeHtml(row.label)}</text>`,
       `<path d="${hbarPath(PL, yTop, Math.max(0.5, x(row.value) - PL), barH, 4)}" fill="${row.color}" ${markAttrs(String(row.value), `${row.label} · ${unitLabel}`)}/>`,
-      `<text x="${fmt(x(row.value) + 6)}" y="${fmt(cy + 3.5)}" text-anchor="start" font-size="11" fill="var(--color-text)" font-variant-numeric="tabular-nums">${row.value}</text>`,
+      `<text x="${fmt(x(row.value) + 6)}" y="${fmt(cy + 3.5)}" text-anchor="start" font-size="11" class="t-ink" font-variant-numeric="tabular-nums">${row.value}</text>`,
     );
   });
 
@@ -211,18 +211,18 @@ export function renderMixChart(rows: MixRow[], ariaLabel: string): string {
     const rW = rPct * innerW - GAP / 2;
 
     parts.push(
-      `<text x="${PL - 10}" y="${fmt(cy + 3.5)}" text-anchor="end" font-size="11" fill="var(--color-text)">${escapeHtml(row.label)}</text>`,
+      `<text x="${PL - 10}" y="${fmt(cy + 3.5)}" text-anchor="end" font-size="11" class="t-ink">${escapeHtml(row.label)}</text>`,
       `<path d="${hbarPath(PL, yTop, Math.max(0.5, dW), barH, 0)}" fill="var(--chart-1)" ${markAttrs(`${row.direct} (${Math.round(dPct * 100)}%)`, `${row.label} · direct throws`)}/>`,
       `<path d="${hbarPath(rX, yTop, Math.max(0.5, rW), barH, 4)}" fill="var(--chart-2)" ${markAttrs(`${row.relay} (${Math.round(rPct * 100)}%)`, `${row.label} · relay chain`)}/>`,
     );
     if (dW > 34) {
       parts.push(
-        `<text x="${fmt(PL + dW / 2)}" y="${fmt(cy + 3.5)}" text-anchor="middle" font-size="10.5" fill="var(--base_07)" font-variant-numeric="tabular-nums">${Math.round(dPct * 100)}%</text>`,
+        `<text x="${fmt(PL + dW / 2)}" y="${fmt(cy + 3.5)}" text-anchor="middle" font-size="10.5" class="t-onfill" font-variant-numeric="tabular-nums">${Math.round(dPct * 100)}%</text>`,
       );
     }
     if (rW > 34) {
       parts.push(
-        `<text x="${fmt(rX + rW / 2)}" y="${fmt(cy + 3.5)}" text-anchor="middle" font-size="10.5" fill="var(--base_07)" font-variant-numeric="tabular-nums">${Math.round(rPct * 100)}%</text>`,
+        `<text x="${fmt(rX + rW / 2)}" y="${fmt(cy + 3.5)}" text-anchor="middle" font-size="10.5" class="t-onfill" font-variant-numeric="tabular-nums">${Math.round(rPct * 100)}%</text>`,
       );
     }
   });

@@ -8,6 +8,13 @@
  *
  * Theming is media-query only (prefers-color-scheme); production has no
  * data-theme toggle.
+ *
+ * Deviation from the brief's token listing: the space-scale clamp() sums
+ * carry whitespace around the + operator. CSS math requires it — the
+ * brief's compacted form ("1.46rem" glued to "+.19vw") is invalid, and
+ * because custom properties fail at computed-value time, it silently
+ * dropped every rule consuming the tokens, including the main breakout
+ * grid. Guarded by src/server/pages/__tests__/theme.test.ts.
  */
 
 export const THEME_CSS = `
@@ -15,7 +22,7 @@ export const THEME_CSS = `
 *, *::before, *::after { box-sizing: border-box; }
 body { margin: 0; }
 
-/* ---- token layer (design brief, verbatim) ---- */
+/* ---- token layer (design brief; spaced calc operators, see module doc) ---- */
 :root {
   --base_00:#1b1818; --base_01:#292424; --base_02:#585050; --base_03:#655d5d;
   --base_04:#7e7777; --base_05:#8a8585; --base_06:#e7dfdf; --base_07:#f4ecec;
@@ -34,13 +41,13 @@ body { margin: 0; }
 
   --page-max: 44rem;
   --page-gutters: clamp(var(--space_m), 3vw, var(--space_xl));
-  --space_3xs: clamp(.25rem,.24rem+.06vw,.3125rem);
-  --space_2xs: clamp(.5rem,.49rem+.06vw,.5625rem);
-  --space_xs:  clamp(.75rem,.73rem+.12vw,.875rem);
-  --space_s:   clamp(1rem,.98rem+.12vw,1.125rem);
-  --space_m:   clamp(1.5rem,1.46rem+.19vw,1.6875rem);
-  --space_l:   clamp(2rem,1.95rem+.25vw,2.25rem);
-  --space_xl:  clamp(3rem,2.93rem+.37vw,3.375rem);
+  --space_3xs: clamp(.25rem, .24rem + .06vw, .3125rem);
+  --space_2xs: clamp(.5rem, .49rem + .06vw, .5625rem);
+  --space_xs:  clamp(.75rem, .73rem + .12vw, .875rem);
+  --space_s:   clamp(1rem, .98rem + .12vw, 1.125rem);
+  --space_m:   clamp(1.5rem, 1.46rem + .19vw, 1.6875rem);
+  --space_l:   clamp(2rem, 1.95rem + .25vw, 2.25rem);
+  --space_xl:  clamp(3rem, 2.93rem + .37vw, 3.375rem);
 
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
                'Liberation Mono', monospace;
@@ -72,7 +79,7 @@ a:hover { color: var(--color-text-accent); }
 :focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent-color),
   0 0 0 4px var(--color-bg), 0 0 0 6px var(--color-text); }
 
-main { display: grid;
+main { display: grid; align-content: start;
   grid-template-columns:
     [full-start] minmax(var(--page-gutters), 1fr)
     [content-start] min(100% - 2*var(--page-gutters), var(--page-max)) [content-end]
@@ -211,6 +218,11 @@ select:hover { border-color: var(--accent-color); }
 svg.chart { width: 100%; height: auto; display: block; overflow: visible;
   font-family: var(--font-mono); }
 svg.chart text { fill: var(--color-text-muted); }
+/* CSS wins over presentation attributes, so emphasised labels need
+   classed rules: t-ink for row/count labels, t-onfill for the light
+   percentage labels sitting on saturated chart fills. */
+svg.chart text.t-ink { fill: var(--color-text); }
+svg.chart text.t-onfill { fill: var(--base_07); }
 .mark { transition: filter .1s ease-out; }
 .mark:hover, .mark:focus-visible { filter: brightness(1.12); outline: none; }
 .mark:focus-visible { stroke: var(--color-text); stroke-width: 2; }
