@@ -13,14 +13,12 @@ import { hasTeamAsset } from "../team-assets";
 /**
  * Escapes a string for safe interpolation into HTML text or attribute
  * values (attributes must be double-quoted).
+ *
+ * Delegates to Bun's native escaper (repo policy: prefer Bun built-ins).
+ * Note the single-quote entity is `&#x27;` (Bun's form), not `&#39;`.
  */
 export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+  return Bun.escapeHTML(value);
 }
 
 /**
@@ -82,6 +80,20 @@ function chainHtml(creditChain: string): string {
 }
 
 /**
+ * Returns true when the value parses as an absolute http(s) URL. Guards the
+ * watch link against non-web schemes (javascript:, data:, ...) that a bad
+ * DB row could otherwise inject into an href.
+ */
+function isSafeHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Renders one play as a fieldset card (used by the highlights gallery and
  * the home page's recent-highlights list).
  */
@@ -94,16 +106,17 @@ export function playCard(play: StoredPlay): string {
   const ctx = [
     halfInningShort(play.halfInning, play.inning),
     `${play.outs} out`,
-    runnersContext(play.runnersOn),
+    escapeHtml(runnersContext(play.runnersOn)),
   ].join(" &middot; ");
 
   const overturnedTag = play.isOverturned
     ? `\n      <span class="overturned" title="out came via a replay-review overturn">overturned</span>`
     : "";
 
-  const video = play.videoUrl
-    ? `<a class="watch" href="${escapeHtml(play.videoUrl)}">&#9654; watch</a>`
-    : `<span class="no-video">no video</span>`;
+  const video =
+    play.videoUrl && isSafeHttpUrl(play.videoUrl)
+      ? `<a class="watch" href="${escapeHtml(play.videoUrl)}">&#9654; watch</a>`
+      : `<span class="no-video">no video</span>`;
 
   return `<fieldset class="card">
   <legend>${escapeHtml(play.date)}</legend>
@@ -132,14 +145,16 @@ const MONTHS_SHORT = [
 ] as const;
 
 /**
- * Formats a YYYY-MM-DD date as "Mar 10". Returns the input unchanged when
- * it does not look like an ISO date.
+ * Formats a YYYY-MM-DD date as "Mar 10". The ISO-formatted result is safe
+ * ASCII, but the non-ISO fallback returns escaped input so callers that
+ * treat this output as pre-escaped HTML (statTile value, season subhead)
+ * cannot leak a raw DB string.
  */
 export function formatShortDate(isoDate: string): string {
   const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return isoDate;
+  if (!match) return escapeHtml(isoDate);
   const month = MONTHS_SHORT[Number(match[2]) - 1];
-  if (!month) return isoDate;
+  if (!month) return escapeHtml(isoDate);
   return `${month} ${Number(match[3])}`;
 }
 
