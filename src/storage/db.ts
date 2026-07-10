@@ -945,6 +945,247 @@ export function queryDistinctTeams(db: Database): string[] {
   return rows.map((r) => r.team);
 }
 
+// ---------------------------------------------------------------------------
+// Ops aggregates (batch 2, /ops page)
+// ---------------------------------------------------------------------------
+
+/** Vote-engagement headline numbers for the /ops page. */
+export interface VoteEngagement {
+  /** Raw reaction events recorded (adds and removes). */
+  totalVotes: number;
+  /** Distinct Slack users who ever voted. */
+  distinctVoters: number;
+  /** Settled fire tally summed across vote snapshots. */
+  fireTotal: number;
+  /** Settled trash tally summed across vote snapshots. */
+  trashTotal: number;
+  /** Snapshotted plays that drew at least one voter. */
+  playsVotedOn: number;
+  /** Total tier-review snapshots taken. */
+  totalSnapshots: number;
+}
+
+/**
+ * Vote-engagement totals: raw event count and distinct voters from the
+ * votes table; settled fire/trash tallies, voted-on plays, and snapshot
+ * count from vote_snapshots (the per-play tallies captured at the end of
+ * each post window).
+ */
+export function queryVoteEngagement(db: Database): VoteEngagement {
+  const votes = db
+    .prepare(
+      "SELECT COUNT(*) AS total, COUNT(DISTINCT user_id) AS voters FROM votes;",
+    )
+    .get() as { total: number; voters: number };
+  const snapshots = db
+    .prepare(
+      `SELECT COALESCE(SUM(fire_count), 0) AS fire,
+         COALESCE(SUM(trash_count), 0) AS trash,
+         COALESCE(SUM(voter_count > 0), 0) AS voted_on,
+         COUNT(*) AS total
+       FROM vote_snapshots;`,
+    )
+    .get() as { fire: number; trash: number; voted_on: number; total: number };
+  return {
+    totalVotes: votes.total,
+    distinctVoters: votes.voters,
+    fireTotal: snapshots.fire,
+    trashTotal: snapshots.trash,
+    playsVotedOn: snapshots.voted_on,
+    totalSnapshots: snapshots.total,
+  };
+}
+
+/** A vote snapshot joined to its play for display context. */
+export interface VotedPlay {
+  fireCount: number;
+  trashCount: number;
+  netScore: number;
+  voterCount: number;
+  fielderName: string;
+  fielderPosition: string;
+  targetBase: string;
+  runnerName: string;
+  tier: Tier;
+  creditChain: string;
+  awayTeam: string;
+  homeTeam: string;
+  /** tier_review_reason; null on rows that were never flagged. */
+  tierReviewReason: string | null;
+}
+
+/** Row shape shared by the most-loved and flagged snapshot queries. */
+interface VotedPlayRow {
+  fire_count: number;
+  trash_count: number;
+  net_score: number;
+  voter_count: number;
+  fielder_name: string;
+  fielder_position: string;
+  target_base: string;
+  runner_name: string;
+  tier: Tier;
+  credit_chain: string;
+  away_team: string;
+  home_team: string;
+  tier_review_reason: string | null;
+}
+
+/**
+ * Columns and join shared by queryMostLovedPlays / queryFlaggedSnapshots.
+ * The join picks one plays row per (game_pk, play_index) via MIN(id) so a
+ * double play (two runner rows) can't duplicate its snapshot.
+ */
+const VOTED_PLAY_SELECT = `
+  SELECT s.fire_count, s.trash_count, s.net_score, s.voter_count,
+    s.tier_review_reason,
+    p.fielder_name, p.fielder_position, p.target_base, p.runner_name,
+    p.tier, p.credit_chain, p.away_team, p.home_team
+  FROM vote_snapshots s
+  JOIN plays p ON p.id = (
+    SELECT MIN(p2.id) FROM plays p2
+    WHERE p2.game_pk = s.game_pk AND p2.play_index = s.play_index)`;
+
+function rowToVotedPlay(row: VotedPlayRow): VotedPlay {
+  return {
+    fireCount: row.fire_count,
+    trashCount: row.trash_count,
+    netScore: row.net_score,
+    voterCount: row.voter_count,
+    fielderName: row.fielder_name,
+    fielderPosition: row.fielder_position,
+    targetBase: row.target_base,
+    runnerName: row.runner_name,
+    tier: row.tier,
+    creditChain: row.credit_chain,
+    awayTeam: row.away_team,
+    homeTeam: row.home_team,
+    tierReviewReason: row.tier_review_reason,
+  };
+}
+
+/**
+ * The plays the channel loved most: snapshots with a positive net score,
+ * highest net first (fire count, then play identity, break ties), joined
+ * to the plays table for fielder/target/matchup context.
+ */
+export function queryMostLovedPlays(db: Database, limit = 5): VotedPlay[] {
+  const rows = db
+    .prepare(
+      `${VOTED_PLAY_SELECT}
+       WHERE s.net_score > 0
+       ORDER BY s.net_score DESC, s.fire_count DESC,
+         s.game_pk ASC, s.play_index ASC
+       LIMIT $limit;`,
+    )
+    .all({ $limit: limit }) as VotedPlayRow[];
+  return rows.map(rowToVotedPlay);
+}
+
+/**
+ * Snapshots flagged for tier review (the channel disagreed with the
+ * assigned tier), ordered high tier first, then by net score.
+ */
+export function queryFlaggedSnapshots(db: Database): VotedPlay[] {
+  const rows = db
+    .prepare(
+      `${VOTED_PLAY_SELECT}
+       WHERE s.tier_review_flagged = 1
+       ORDER BY CASE p.tier WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+         s.net_score ASC, s.game_pk ASC, s.play_index ASC;`,
+    )
+    .all() as VotedPlayRow[];
+  return rows.map(rowToVotedPlay);
+}
+
+/** Play count per video fetch_status; NULL bucketed as "unfetched". */
+export interface FetchStatusCount {
+  /** A FetchStatus value, or "unfetched" for rows predating the column. */
+  status: string;
+  count: number;
+}
+
+/**
+ * Video-lookup outcomes per play. Rows that predate the fetch_status
+ * column (NULL) are bucketed as "unfetched"; ordered most common first.
+ */
+export function queryFetchStatusCounts(db: Database): FetchStatusCount[] {
+  const rows = db
+    .prepare(
+      `SELECT COALESCE(fetch_status, 'unfetched') AS status, COUNT(*) AS count
+       FROM plays GROUP BY status ORDER BY count DESC, status ASC;`,
+    )
+    .all() as { status: string; count: number }[];
+  return rows;
+}
+
+/** Event count per play_rematch_events decision. */
+export interface RematchDecisionCount {
+  decision: string;
+  count: number;
+}
+
+/**
+ * Outcomes of rematch (:repeat:) and alternate-angle (:movie_camera:)
+ * requests, counted per decision, most common first.
+ */
+export function queryRematchDecisionCounts(db: Database): RematchDecisionCount[] {
+  const rows = db
+    .prepare(
+      `SELECT decision, COUNT(*) AS count FROM play_rematch_events
+       GROUP BY decision ORDER BY count DESC, decision ASC;`,
+    )
+    .all() as { decision: string; count: number }[];
+  return rows;
+}
+
+/** Pipeline-health totals for the /ops page. */
+export interface PipelineTotals {
+  totalPlays: number;
+  distinctGames: number;
+  /** Plays whose out came via a replay-review overturn. */
+  overturned: number;
+  /** Plays carrying a video link. */
+  withVideo: number;
+  /** Plays with a measured Statcast throw velocity. */
+  withVelocity: number;
+  /** Plays whose velocity lookup ran but found no matching throw. */
+  velocityNoMatch: number;
+}
+
+/**
+ * One-scan pipeline totals over the plays table. COALESCE guards the
+ * SUM() aggregates, which return NULL on an empty table.
+ */
+export function queryPipelineTotals(db: Database): PipelineTotals {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS total_plays,
+         COUNT(DISTINCT game_pk) AS distinct_games,
+         COALESCE(SUM(is_overturned), 0) AS overturned,
+         COALESCE(SUM(video_url IS NOT NULL), 0) AS with_video,
+         COALESCE(SUM(throw_velocity IS NOT NULL), 0) AS with_velocity,
+         COALESCE(SUM(throw_velocity_status = 'no_match'), 0) AS velocity_no_match
+       FROM plays;`,
+    )
+    .get() as {
+      total_plays: number;
+      distinct_games: number;
+      overturned: number;
+      with_video: number;
+      with_velocity: number;
+      velocity_no_match: number;
+    };
+  return {
+    totalPlays: row.total_plays,
+    distinctGames: row.distinct_games,
+    overturned: row.overturned,
+    withVideo: row.with_video,
+    withVelocity: row.with_velocity,
+    velocityNoMatch: row.velocity_no_match,
+  };
+}
+
 /**
  * A play that is eligible for a Savant video backfill attempt.
  *
