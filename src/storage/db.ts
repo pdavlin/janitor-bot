@@ -863,9 +863,9 @@ export function queryDirectRelayByBase(db: Database): BaseThrowMix[] {
 export function queryArmLeaderboard(db: Database, limit = 10): FielderLeader[] {
   const rows = db
     .prepare(
-      `SELECT fielder_name,
+      `SELECT MAX(fielder_name) AS fielder_name,
          (SELECT p2.fielder_position FROM plays p2
-          WHERE p2.fielder_name = p.fielder_name
+          WHERE p2.fielder_id = p.fielder_id
           GROUP BY p2.fielder_position
           ORDER BY COUNT(*) DESC, p2.fielder_position ASC LIMIT 1) AS position,
          COUNT(*) AS total,
@@ -873,7 +873,7 @@ export function queryArmLeaderboard(db: Database, limit = 10): FielderLeader[] {
          SUM(CASE WHEN tier = 'medium' THEN 1 ELSE 0 END) AS medium,
          SUM(CASE WHEN tier = 'low' THEN 1 ELSE 0 END) AS low
        FROM plays p
-       GROUP BY fielder_name
+       GROUP BY fielder_id
        ORDER BY total DESC, fielder_name ASC
        LIMIT $limit;`,
     )
