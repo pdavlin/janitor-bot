@@ -141,8 +141,9 @@ function baseSection(data: SeasonPageData): string {
 
   return `<fieldset>
     <legend>target base breakdown</legend>
-    <p class="chart-note">Which base the runner was cut down at. Colors key the base
-      across every chart below.</p>
+    <p class="chart-note">Which base the runner was cut down at. The colors below key
+      the base for this chart only; the direct-vs-relay chart reuses the same
+      swatches for its own two series and carries its own legend.</p>
     ${renderHBarChart(rows, "target", aria)}
     ${renderChartLegend(rows.map((r) => ({ label: r.label, color: r.color })))}
     ${renderDataTable(
