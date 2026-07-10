@@ -206,24 +206,40 @@ export function renderMixChart(rows: MixRow[], ariaLabel: string): string {
     const yTop = cy - barH / 2;
     const dPct = row.direct / total;
     const rPct = row.relay / total;
-    const dW = dPct * innerW - GAP / 2;
-    const rX = PL + dPct * innerW + GAP / 2;
-    const rW = rPct * innerW - GAP / 2;
+    const hasDirect = row.direct > 0;
+    const hasRelay = row.relay > 0;
+    // Only one non-zero segment means it spans the full width with no gap; a
+    // zero-count segment renders nothing at all (no path, so nothing focusable
+    // and nothing for the tooltip to announce as "0 (0%)").
+    const gap = hasDirect && hasRelay ? GAP : 0;
+    const dW = dPct * innerW - gap / 2;
+    const rX = PL + dPct * innerW + gap / 2;
+    const rW = rPct * innerW - gap / 2;
 
     parts.push(
       `<text x="${PL - 10}" y="${fmt(cy + 3.5)}" text-anchor="end" font-size="11" class="t-ink">${escapeHtml(row.label)}</text>`,
-      `<path d="${hbarPath(PL, yTop, Math.max(0.5, dW), barH, 0)}" fill="var(--chart-1)" ${markAttrs(`${row.direct} (${Math.round(dPct * 100)}%)`, `${row.label} · direct throws`)}/>`,
-      `<path d="${hbarPath(rX, yTop, Math.max(0.5, rW), barH, 4)}" fill="var(--chart-2)" ${markAttrs(`${row.relay} (${Math.round(rPct * 100)}%)`, `${row.label} · relay chain`)}/>`,
     );
-    if (dW > 34) {
+    if (hasDirect) {
+      // Direct is square-ended when a relay segment follows it, rounded when
+      // it is the only segment (the bar's true right edge).
       parts.push(
-        `<text x="${fmt(PL + dW / 2)}" y="${fmt(cy + 3.5)}" text-anchor="middle" font-size="10.5" class="t-onfill" font-variant-numeric="tabular-nums">${Math.round(dPct * 100)}%</text>`,
+        `<path d="${hbarPath(PL, yTop, Math.max(0.5, dW), barH, hasRelay ? 0 : 4)}" fill="var(--chart-1)" ${markAttrs(`${row.direct} (${Math.round(dPct * 100)}%)`, `${row.label} · direct throws`)}/>`,
       );
+      if (dW > 34) {
+        parts.push(
+          `<text x="${fmt(PL + dW / 2)}" y="${fmt(cy + 3.5)}" text-anchor="middle" font-size="10.5" class="t-onfill" font-variant-numeric="tabular-nums">${Math.round(dPct * 100)}%</text>`,
+        );
+      }
     }
-    if (rW > 34) {
+    if (hasRelay) {
       parts.push(
-        `<text x="${fmt(rX + rW / 2)}" y="${fmt(cy + 3.5)}" text-anchor="middle" font-size="10.5" class="t-onfill" font-variant-numeric="tabular-nums">${Math.round(rPct * 100)}%</text>`,
+        `<path d="${hbarPath(rX, yTop, Math.max(0.5, rW), barH, 4)}" fill="var(--chart-2)" ${markAttrs(`${row.relay} (${Math.round(rPct * 100)}%)`, `${row.label} · relay chain`)}/>`,
       );
+      if (rW > 34) {
+        parts.push(
+          `<text x="${fmt(rX + rW / 2)}" y="${fmt(cy + 3.5)}" text-anchor="middle" font-size="10.5" class="t-onfill" font-variant-numeric="tabular-nums">${Math.round(rPct * 100)}%</text>`,
+        );
+      }
     }
   });
 
