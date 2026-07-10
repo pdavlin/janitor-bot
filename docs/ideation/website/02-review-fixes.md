@@ -81,3 +81,33 @@ weekly-review date-window tests in
 
 Run with the pinned bun if it is not on PATH:
 `/Users/pdavlin/.local/share/mise/installs/bun/1.3.14/bin/bun test`.
+
+## Deferred review debt (confirmed, not fixed — batch-2 candidates)
+
+- **Direct-throw rule triple-encoded**: `ranking.ts` (split length), `components.ts`
+  playCard (same split), `db.ts` queryDirectRelayByBase (SQL length arithmetic,
+  magic 4 = separator length). One exported chain helper, or a persisted
+  segment-count column.
+- **Filter parser twin**: `parseHighlightsFilters` duplicates `parsePlayFilters`
+  field-by-field, differing only in lenient-vs-400 policy. One parser
+  parameterized on strictness.
+- **Route table**: `KNOWN_ROUTES` hand-mirrors the dispatch if-chain for
+  405-vs-404; a single `[{match, handler}]` table drives both.
+- **Team map duplication**: `team-assets.ts` TEAM_ASSET_FILES vs
+  `notifications/team-emoji.ts` TEAM_ABBREV_TO_EMOJI; drift test covers only the
+  latter.
+- **queryTierCounts** duplicates queryPlayStats' tier aggregate.
+- **highlights.ts** enumerates the four filter keys in three places (form,
+  queryString, emptyState).
+- **Form option constants** duplicate routes.ts VALID_* sets; `?base=1B` is
+  unreachable from the gallery while /season displays 1B rows.
+- **theme.ts** carries page-specific CSS despite the shared-only contract; shell
+  needs a per-page CSS slot.
+- **season.ts** six section renderers copy-paste fieldset + empty-state wrappers.
+- **Perf (all low-severity at current traffic)**: /season runs 9 uncached
+  aggregates per hit; leaderboard correlated subquery re-aggregates per fielder;
+  team assets stat+read per request; queryDistinctTeams UNION scan per gallery
+  view; /about page rebuilt per request. Slack acks before dispatch, so none of
+  this threatens the 3s deadline today.
+- **Plausible-only**: single-node credit chains would be labeled "relay"
+  (requires anomalous feed data).
