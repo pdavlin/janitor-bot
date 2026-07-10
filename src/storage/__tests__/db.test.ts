@@ -23,6 +23,7 @@ import {
   updatePlayFetchStatus,
   updatePlayId,
   migratePlayRematchEventsCheck,
+  queryArmLeaderboard,
 } from "../db";
 import type { DetectedPlay, StoredPlay, PlayFilters } from "../db";
 
@@ -770,5 +771,74 @@ describe("play_id and fetch_status persistence", () => {
     const stored = queryPlays(db, { limit: 200 });
     const seen = new Set(stored.map((p) => p.fetchStatus));
     statuses.forEach((s) => expect(seen.has(s)).toBe(true));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// queryArmLeaderboard — grouping identity
+// ---------------------------------------------------------------------------
+
+describe("queryArmLeaderboard", () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = createDatabase(":memory:");
+  });
+
+  test("two different players sharing a name stay as separate rows", () => {
+    // Same fielder_name, different fielder_id — must NOT merge.
+    insertPlays(db, [
+      makeMockPlay({
+        gamePk: 1,
+        playIndex: 1,
+        runnerId: 1,
+        fielderId: 100,
+        fielderName: "Will Smith",
+        fielderPosition: "C",
+        tier: "high",
+      }),
+      makeMockPlay({
+        gamePk: 2,
+        playIndex: 2,
+        runnerId: 2,
+        fielderId: 200,
+        fielderName: "Will Smith",
+        fielderPosition: "LF",
+        tier: "low",
+      }),
+    ]);
+
+    const leaders = queryArmLeaderboard(db);
+    expect(leaders).toHaveLength(2);
+    expect(leaders.every((l) => l.total === 1)).toBe(true);
+  });
+
+  test("one player's assists merge under a single fielder_id", () => {
+    // Same fielder_id, minor name variants — must merge into one row whose
+    // total sums every assist and whose tier splits are aggregated.
+    insertPlays(db, [
+      makeMockPlay({
+        gamePk: 3,
+        playIndex: 1,
+        runnerId: 3,
+        fielderId: 300,
+        fielderName: "Jose Ramirez",
+        tier: "high",
+      }),
+      makeMockPlay({
+        gamePk: 3,
+        playIndex: 2,
+        runnerId: 4,
+        fielderId: 300,
+        fielderName: "José Ramírez",
+        tier: "medium",
+      }),
+    ]);
+
+    const leaders = queryArmLeaderboard(db);
+    expect(leaders).toHaveLength(1);
+    expect(leaders[0]!.total).toBe(2);
+    expect(leaders[0]!.high).toBe(1);
+    expect(leaders[0]!.medium).toBe(1);
   });
 });

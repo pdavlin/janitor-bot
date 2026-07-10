@@ -22,9 +22,27 @@ import {
   queryPlayById,
   queryPlayStats,
   getDbStats,
+  queryWeeklyCounts,
+  queryTierCounts,
+  queryTargetBaseCounts,
+  queryDirectRelayByBase,
+  queryArmLeaderboard,
+  queryTeamsMostBurned,
+  queryRecentHighTierPlays,
+  queryDistinctTeams,
 } from "../storage/db";
 import type { SchedulerStatus } from "../daemon/scheduler";
-import { LANDING_PAGE_HTML } from "./landing";
+import { renderHomePage } from "./pages/home";
+import {
+  renderHighlightsPage,
+  HIGHLIGHTS_PAGE_SIZE,
+  HIGHLIGHTS_MAX_OFFSET,
+  type HighlightsFilters,
+} from "./pages/highlights";
+import { renderSeasonPage } from "./pages/season";
+import { renderAboutPage } from "./pages/about";
+import { renderErrorPage } from "./pages/error";
+import { serveTeamAsset } from "./team-assets";
 import {
   verifySlackSignature,
   isDuplicateEvent,
@@ -85,6 +103,17 @@ function jsonResponse(
   });
 }
 
+/** Builds an HTML Response with CORS headers and Content-Type pre-set. */
+function htmlResponse(html: string, status = 200): Response {
+  return new Response(html, {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      ...CORS_HEADERS,
+    },
+  });
+}
+
 /** Returns today's date as YYYY-MM-DD in local time. */
 function todayLocal(): string {
   const now = new Date();
@@ -99,6 +128,8 @@ function todayLocal(): string {
 // ---------------------------------------------------------------------------
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+/** MLB team abbreviation shape (2-3 uppercase letters, e.g. LAD, KC). */
+const TEAM_ABBR_PATTERN = /^[A-Z]{2,3}$/;
 const VALID_TIERS = new Set<string>(["high", "medium", "low"]);
 const VALID_POSITIONS = new Set<string>(["LF", "CF", "RF"]);
 const VALID_BASES = new Set<string>(["2B", "3B", "Home"]);
@@ -201,14 +232,72 @@ function parsePlayFilters(
   return filters;
 }
 
+/**
+ * Extracts HighlightsFilters from URL search params for the HTML gallery.
+ *
+ * Same value semantics as parsePlayFilters (tier/team/position/base), but
+ * form-friendly: empty or invalid values are treated as unset instead of
+ * producing a 400, since the page's own form only emits valid values.
+ */
+function parseHighlightsFilters(params: URLSearchParams): HighlightsFilters {
+  const filters: HighlightsFilters = {};
+
+  const tier = params.get("tier");
+  if (tier && VALID_TIERS.has(tier)) filters.tier = tier as Tier;
+
+  // Team is a 2-3 letter MLB abbreviation. Anything else is dropped so the
+  // form never carries an invisible filter it can't render. The handler
+  // additionally checks the value against the DB's distinct teams.
+  const team = params.get("team");
+  if (team) {
+    const upper = team.toUpperCase();
+    if (TEAM_ABBR_PATTERN.test(upper)) filters.team = upper;
+  }
+
+  const position = params.get("position");
+  if (position && VALID_POSITIONS.has(position)) filters.position = position;
+
+  const base = params.get("base");
+  if (base && VALID_BASES.has(base)) filters.base = base;
+
+  return filters;
+}
+
+/**
+ * Parses the highlights ?offset param, clamped to the page-aligned maximum
+ * (HIGHLIGHTS_MAX_OFFSET); invalid or missing -> 0. Page alignment keeps the
+ * clamp on a real page so the pager's older link disappears at the boundary
+ * instead of looping back to the same page.
+ */
+function parseHighlightsOffset(params: URLSearchParams): number {
+  const raw = params.get("offset");
+  if (raw === null) return 0;
+  const offset = parseNonNegativeInt(raw);
+  if (offset === null) return 0;
+  return Math.min(offset, HIGHLIGHTS_MAX_OFFSET);
+}
+
+/** Matches GET /assets/teams/:abbr.png. */
+const TEAM_ASSET_ROUTE = /^\/assets\/teams\/([A-Za-z]{1,5})\.png$/;
+
+/** HTML page routes; an error on these returns a themed 500, not JSON. */
+const HTML_ROUTES = new Set<string>(["/", "/highlights", "/season", "/about"]);
+
+/** Themed 500 document, built once (DB-free) and reused for HTML errors. */
+const ERROR_PAGE_HTML = renderErrorPage();
+
 /** Known route patterns for 405 detection. */
 const KNOWN_ROUTES: Array<RegExp | string> = [
   "/",
+  "/highlights",
+  "/season",
+  "/about",
   "/plays",
   "/plays/today",
   /^\/plays\/\d+$/,
   "/stats",
   "/health",
+  TEAM_ASSET_ROUTE,
 ];
 
 /**
@@ -234,6 +323,83 @@ interface HandlerContext {
   slackConfig?: SlackClientConfig;
   rematch?: RematchDispatchConfig;
   angle?: AngleDispatchConfig;
+}
+
+/**
+ * GET /
+ *
+ * Home page: headline stat tiles, the three most recent high-tier plays
+ * with video, and the about blurb.
+ */
+function handleHomePage(ctx: HandlerContext): Response {
+  const dbStats = getDbStats(ctx.db, ctx.dbPath);
+  return htmlResponse(
+    renderHomePage({
+      totalPlays: dbStats.totalPlays,
+      highTierCount: queryPlayCount(ctx.db, { tier: "high" }),
+      oldestPlay: dbStats.oldestPlay,
+      newestPlay: dbStats.newestPlay,
+      recentPlays: queryRecentHighTierPlays(ctx.db, 3),
+    }),
+  );
+}
+
+/**
+ * GET /highlights
+ *
+ * Gallery page with server-side tier/team/position/base filters and
+ * offset paging.
+ */
+function handleHighlightsPage(
+  ctx: HandlerContext,
+  params: URLSearchParams,
+): Response {
+  const filters = parseHighlightsFilters(params);
+  const offset = parseHighlightsOffset(params);
+  const teams = queryDistinctTeams(ctx.db);
+  // Drop a well-formed but unknown team so it never becomes an invisible
+  // filter the select can't display as the current value.
+  if (filters.team !== undefined && !teams.includes(filters.team)) {
+    delete filters.team;
+  }
+  const plays = queryPlays(ctx.db, {
+    ...filters,
+    limit: HIGHLIGHTS_PAGE_SIZE,
+    offset,
+  });
+  const total = queryPlayCount(ctx.db, filters);
+  return htmlResponse(
+    renderHighlightsPage({
+      plays,
+      total,
+      offset,
+      filters,
+      teams,
+    }),
+  );
+}
+
+/**
+ * GET /season
+ *
+ * Season stats page: four charts, the arm leaderboard, and the
+ * teams-most-burned list, computed from the DB at request time.
+ */
+function handleSeasonPage(ctx: HandlerContext): Response {
+  const dbStats = getDbStats(ctx.db, ctx.dbPath);
+  return htmlResponse(
+    renderSeasonPage({
+      totalPlays: dbStats.totalPlays,
+      oldestPlay: dbStats.oldestPlay,
+      newestPlay: dbStats.newestPlay,
+      weekly: queryWeeklyCounts(ctx.db),
+      tiers: queryTierCounts(ctx.db),
+      bases: queryTargetBaseCounts(ctx.db),
+      mix: queryDirectRelayByBase(ctx.db),
+      leaders: queryArmLeaderboard(ctx.db),
+      teamsBurned: queryTeamsMostBurned(ctx.db),
+    }),
+  );
 }
 
 /**
@@ -374,12 +540,15 @@ async function handleSlackEvents(
  *
  * Routes are matched in order:
  * 1. OPTIONS on any path (CORS preflight)
- * 2. GET /plays/today
- * 3. GET /plays/:id (numeric id)
- * 4. GET /plays
- * 5. GET /stats
- * 6. GET /health
- * 7. Everything else -> 404
+ * 2. GET / (home page)
+ * 3. GET /highlights, /season, /about (HTML pages)
+ * 4. GET /assets/teams/:abbr.png (team logos)
+ * 5. GET /plays/today
+ * 6. GET /plays/:id (numeric id)
+ * 7. GET /plays
+ * 8. GET /stats
+ * 9. GET /health
+ * 10. Everything else -> 404
  *
  * @param deps - Injected dependencies (database, logger, port, scheduler status getter)
  * @returns The running Bun Server instance
@@ -448,13 +617,36 @@ export function startServer(deps: ServerDeps): HttpServer {
 
         // GET /
         if (pathname === "/") {
-          response = new Response(LANDING_PAGE_HTML, {
-            status: 200,
-            headers: {
-              "Content-Type": "text/html; charset=utf-8",
-              ...CORS_HEADERS,
-            },
-          });
+          response = handleHomePage(ctx);
+          logRequest(logger, req.method, pathname, response.status, start);
+          return response;
+        }
+
+        // GET /highlights
+        if (pathname === "/highlights") {
+          response = handleHighlightsPage(ctx, url.searchParams);
+          logRequest(logger, req.method, pathname, response.status, start);
+          return response;
+        }
+
+        // GET /season
+        if (pathname === "/season") {
+          response = handleSeasonPage(ctx);
+          logRequest(logger, req.method, pathname, response.status, start);
+          return response;
+        }
+
+        // GET /about
+        if (pathname === "/about") {
+          response = htmlResponse(renderAboutPage());
+          logRequest(logger, req.method, pathname, response.status, start);
+          return response;
+        }
+
+        // GET /assets/teams/:abbr.png
+        const teamAssetMatch = pathname.match(TEAM_ASSET_ROUTE);
+        if (teamAssetMatch) {
+          response = await serveTeamAsset(teamAssetMatch[1], CORS_HEADERS);
           logRequest(logger, req.method, pathname, response.status, start);
           return response;
         }
@@ -506,7 +698,11 @@ export function startServer(deps: ServerDeps): HttpServer {
           path: pathname,
           error: message,
         });
-        response = jsonResponse({ error: "Internal server error" }, 500);
+        // HTML routes get a themed 500 page; JSON routes keep the JSON error.
+        response =
+          req.method === "GET" && HTML_ROUTES.has(pathname)
+            ? htmlResponse(ERROR_PAGE_HTML, 500)
+            : jsonResponse({ error: "Internal server error" }, 500);
         logRequest(logger, req.method, pathname, response.status, start);
         return response;
       }

@@ -188,7 +188,7 @@ describe("HTTP server routes", () => {
   // -------------------------------------------------------------------------
 
   describe("GET /", () => {
-    test("returns HTML landing page", async () => {
+    test("returns the HTML home page", async () => {
       const res = await get("/");
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Type")).toContain("text/html");
@@ -196,6 +196,8 @@ describe("HTTP server routes", () => {
       const body = await res.text();
       expect(body).toContain("<!doctype html>");
       expect(body).toContain("janitor-bot");
+      expect(body).toContain("plays tracked");
+      expect(body).toContain("recent highlights");
     });
   });
 
