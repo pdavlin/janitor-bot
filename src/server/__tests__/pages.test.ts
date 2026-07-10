@@ -98,6 +98,7 @@ const PLAY_MEDIUM_NO_VIDEO = makeMockPlay({
   gamePk: 717402,
   playIndex: 10,
   date: "2026-06-22",
+  fielderId: 671213,
   fielderName: "Wilyer Abreu",
   fielderPosition: "RF",
   runnerName: "Willi Castro",
@@ -115,6 +116,7 @@ const PLAY_LOW_OVERTURNED = makeMockPlay({
   gamePk: 717403,
   playIndex: 5,
   date: "2026-06-21",
+  fielderId: 691718,
   fielderName: "Chandler Simpson",
   fielderPosition: "LF",
   runnerName: "Tyler Tolbert",
@@ -130,6 +132,7 @@ const PLAY_UNSAFE_NAME = makeMockPlay({
   gamePk: 717404,
   playIndex: 7,
   date: "2026-06-20",
+  fielderId: 999001,
   fielderName: '<script>alert("x")</script> Jones',
   runnerName: 'O"Neill & <b>Sons</b>',
   awayTeam: "SEA",
@@ -310,6 +313,39 @@ describe("website pages (seeded DB)", () => {
       const { body } = await getPage("/highlights");
       expect(body).toContain('src="/assets/teams/LAD.png" alt="LAD" width="20" height="20"');
     });
+
+    test("uppercases a lowercase team filter and applies it", async () => {
+      const { body } = await getPage("/highlights?team=lad");
+      expect(countOf(body, '<fieldset class="card">')).toBe(1);
+      expect(body).toContain("Andy Pages");
+      expect(body).toContain('<option value="LAD" selected>');
+    });
+
+    test("drops a well-formed but unknown team instead of hiding all plays", async () => {
+      const { res, body } = await getPage("/highlights?team=ZZ");
+      expect(res.status).toBe(200);
+      // Unknown team -> treated as unset, so every play still shows.
+      expect(countOf(body, '<fieldset class="card">')).toBe(4);
+      // And the select shows "all teams", not a phantom ZZ option.
+      expect(body).not.toContain('value="ZZ" selected');
+    });
+
+    test("drops a malformed team value", async () => {
+      const { res, body } = await getPage("/highlights?team=not-a-team");
+      expect(res.status).toBe(200);
+      expect(countOf(body, '<fieldset class="card">')).toBe(4);
+    });
+
+    test("clamps an out-of-range offset to the page-aligned maximum", async () => {
+      // offset=100000 clamps to HIGHLIGHTS_MAX_OFFSET (9996). With only the
+      // seeded plays there is nothing that far back, and the newer link steps
+      // back exactly one page from the clamp (9996 - 14 = 9982).
+      const { res, body } = await getPage("/highlights?offset=100000");
+      expect(res.status).toBe(200);
+      expect(body).toContain("nothing this far back.");
+      expect(body).toContain("offset=9982");
+      expect(body).not.toContain("no plays tracked yet.");
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -396,6 +432,69 @@ describe("website pages (seeded DB)", () => {
       const res = await fetch(`${baseUrl}/assets/teams/ZZZ.png`);
       expect(res.status).toBe(404);
     });
+
+    test("carries CORS headers on both the 200 and the 404", async () => {
+      const ok = await fetch(`${baseUrl}/assets/teams/LAD.png`);
+      expect(ok.headers.get("Access-Control-Allow-Origin")).toBe("*");
+
+      const missing = await fetch(`${baseUrl}/assets/teams/ZZZ.png`);
+      expect(missing.status).toBe(404);
+      expect(missing.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HTML error handling
+// ---------------------------------------------------------------------------
+
+describe("HTML route error handling", () => {
+  let db: Database;
+  let server: Server<undefined>;
+  let baseUrl: string;
+
+  beforeAll(() => {
+    db = createDatabase(":memory:");
+    server = startServer({
+      db,
+      dbPath: ":memory:",
+      logger: makeSilentLogger(),
+      port: 0,
+      getSchedulerStatus: makeSchedulerStatus,
+    });
+    baseUrl = `http://localhost:${server.port}`;
+    // Force every DB-backed handler to throw by closing the database out
+    // from under the running server.
+    db.close();
+  });
+
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  test("an HTML route returns a themed 500 page, not JSON", async () => {
+    const res = await fetch(`${baseUrl}/`);
+    expect(res.status).toBe(500);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+    const body = await res.text();
+    expect(body).toContain("<!doctype html>");
+    expect(body).toContain("something broke");
+    expect(body).toContain("<style>");
+  });
+
+  test("the season HTML route also returns the themed 500 page", async () => {
+    const res = await fetch(`${baseUrl}/season`);
+    expect(res.status).toBe(500);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+    expect(await res.text()).toContain("something broke");
+  });
+
+  test("a JSON route keeps the JSON error path", async () => {
+    const res = await fetch(`${baseUrl}/plays`);
+    expect(res.status).toBe(500);
+    expect(res.headers.get("Content-Type")).toContain("application/json");
+    const body = await res.json();
+    expect(body.error).toBe("Internal server error");
   });
 });
 

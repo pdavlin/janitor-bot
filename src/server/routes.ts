@@ -36,10 +36,12 @@ import { renderHomePage } from "./pages/home";
 import {
   renderHighlightsPage,
   HIGHLIGHTS_PAGE_SIZE,
+  HIGHLIGHTS_MAX_OFFSET,
   type HighlightsFilters,
 } from "./pages/highlights";
 import { renderSeasonPage } from "./pages/season";
 import { renderAboutPage } from "./pages/about";
+import { renderErrorPage } from "./pages/error";
 import { serveTeamAsset } from "./team-assets";
 import {
   verifySlackSignature,
@@ -126,6 +128,8 @@ function todayLocal(): string {
 // ---------------------------------------------------------------------------
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+/** MLB team abbreviation shape (2-3 uppercase letters, e.g. LAD, KC). */
+const TEAM_ABBR_PATTERN = /^[A-Z]{2,3}$/;
 const VALID_TIERS = new Set<string>(["high", "medium", "low"]);
 const VALID_POSITIONS = new Set<string>(["LF", "CF", "RF"]);
 const VALID_BASES = new Set<string>(["2B", "3B", "Home"]);
@@ -241,8 +245,14 @@ function parseHighlightsFilters(params: URLSearchParams): HighlightsFilters {
   const tier = params.get("tier");
   if (tier && VALID_TIERS.has(tier)) filters.tier = tier as Tier;
 
+  // Team is a 2-3 letter MLB abbreviation. Anything else is dropped so the
+  // form never carries an invisible filter it can't render. The handler
+  // additionally checks the value against the DB's distinct teams.
   const team = params.get("team");
-  if (team) filters.team = team;
+  if (team) {
+    const upper = team.toUpperCase();
+    if (TEAM_ABBR_PATTERN.test(upper)) filters.team = upper;
+  }
 
   const position = params.get("position");
   if (position && VALID_POSITIONS.has(position)) filters.position = position;
@@ -253,17 +263,28 @@ function parseHighlightsFilters(params: URLSearchParams): HighlightsFilters {
   return filters;
 }
 
-/** Parses the highlights ?offset param, clamped to [0, 10000]; invalid -> 0. */
+/**
+ * Parses the highlights ?offset param, clamped to the page-aligned maximum
+ * (HIGHLIGHTS_MAX_OFFSET); invalid or missing -> 0. Page alignment keeps the
+ * clamp on a real page so the pager's older link disappears at the boundary
+ * instead of looping back to the same page.
+ */
 function parseHighlightsOffset(params: URLSearchParams): number {
   const raw = params.get("offset");
   if (raw === null) return 0;
   const offset = parseNonNegativeInt(raw);
   if (offset === null) return 0;
-  return Math.min(offset, 10000);
+  return Math.min(offset, HIGHLIGHTS_MAX_OFFSET);
 }
 
 /** Matches GET /assets/teams/:abbr.png. */
 const TEAM_ASSET_ROUTE = /^\/assets\/teams\/([A-Za-z]{1,5})\.png$/;
+
+/** HTML page routes; an error on these returns a themed 500, not JSON. */
+const HTML_ROUTES = new Set<string>(["/", "/highlights", "/season", "/about"]);
+
+/** Themed 500 document, built once (DB-free) and reused for HTML errors. */
+const ERROR_PAGE_HTML = renderErrorPage();
 
 /** Known route patterns for 405 detection. */
 const KNOWN_ROUTES: Array<RegExp | string> = [
@@ -335,6 +356,12 @@ function handleHighlightsPage(
 ): Response {
   const filters = parseHighlightsFilters(params);
   const offset = parseHighlightsOffset(params);
+  const teams = queryDistinctTeams(ctx.db);
+  // Drop a well-formed but unknown team so it never becomes an invisible
+  // filter the select can't display as the current value.
+  if (filters.team !== undefined && !teams.includes(filters.team)) {
+    delete filters.team;
+  }
   const plays = queryPlays(ctx.db, {
     ...filters,
     limit: HIGHLIGHTS_PAGE_SIZE,
@@ -347,7 +374,7 @@ function handleHighlightsPage(
       total,
       offset,
       filters,
-      teams: queryDistinctTeams(ctx.db),
+      teams,
     }),
   );
 }
@@ -619,7 +646,7 @@ export function startServer(deps: ServerDeps): HttpServer {
         // GET /assets/teams/:abbr.png
         const teamAssetMatch = pathname.match(TEAM_ASSET_ROUTE);
         if (teamAssetMatch) {
-          response = await serveTeamAsset(teamAssetMatch[1]);
+          response = await serveTeamAsset(teamAssetMatch[1], CORS_HEADERS);
           logRequest(logger, req.method, pathname, response.status, start);
           return response;
         }
@@ -671,7 +698,11 @@ export function startServer(deps: ServerDeps): HttpServer {
           path: pathname,
           error: message,
         });
-        response = jsonResponse({ error: "Internal server error" }, 500);
+        // HTML routes get a themed 500 page; JSON routes keep the JSON error.
+        response =
+          req.method === "GET" && HTML_ROUTES.has(pathname)
+            ? htmlResponse(ERROR_PAGE_HTML, 500)
+            : jsonResponse({ error: "Internal server error" }, 500);
         logRequest(logger, req.method, pathname, response.status, start);
         return response;
       }

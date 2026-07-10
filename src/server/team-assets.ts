@@ -67,21 +67,30 @@ export function hasTeamAsset(abbr: string): boolean {
 /**
  * Serves the logo PNG for a team abbreviation with long cache headers.
  * Returns a 404 response for unknown abbreviations or missing files.
+ *
+ * @param abbr        - Team abbreviation from the request path.
+ * @param corsHeaders - CORS headers applied to every response so the asset
+ *                      route matches the JSON/HTML routes' cross-origin
+ *                      behavior on both the 200 and the 404.
  */
-export async function serveTeamAsset(abbr: string): Promise<Response> {
+export async function serveTeamAsset(
+  abbr: string,
+  corsHeaders: Record<string, string>,
+): Promise<Response> {
   const filename = TEAM_ASSET_FILES[abbr.toUpperCase()];
   if (!filename) {
-    return new Response("Not found", { status: 404 });
+    return new Response("Not found", { status: 404, headers: { ...corsHeaders } });
   }
 
   const file = Bun.file(`${ASSET_DIR}/${filename}.png`);
   if (!(await file.exists())) {
-    return new Response("Not found", { status: 404 });
+    return new Response("Not found", { status: 404, headers: { ...corsHeaders } });
   }
 
   return new Response(file, {
     status: 200,
     headers: {
+      ...corsHeaders,
       "Content-Type": "image/png",
       "Cache-Control": CACHE_CONTROL,
     },

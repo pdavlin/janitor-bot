@@ -13,6 +13,16 @@ import { escapeHtml, playCard } from "./components";
 /** Number of play cards per gallery page. */
 export const HIGHLIGHTS_PAGE_SIZE = 14;
 
+/**
+ * Hard ceiling on how far back paging can reach, matching the JSON API's
+ * 10000-row offset cap but snapped down to a page boundary so the clamp
+ * lands on a real page (the largest multiple of the page size <= 10000).
+ * The offset parser and the pager both derive from this, so the older
+ * link vanishes exactly at the clamp instead of looping on itself.
+ */
+export const HIGHLIGHTS_MAX_OFFSET =
+  Math.floor(10000 / HIGHLIGHTS_PAGE_SIZE) * HIGHLIGHTS_PAGE_SIZE;
+
 /** Validated filter selection for the gallery (all optional). */
 export interface HighlightsFilters {
   tier?: Tier;
@@ -80,8 +90,8 @@ function pager(data: HighlightsPageData): string {
       `<a href="${escapeHtml(queryString(data.filters, newerOffset))}">&larr; newer</a>`,
     );
   }
-  if (data.offset + HIGHLIGHTS_PAGE_SIZE < data.total) {
-    const olderOffset = data.offset + HIGHLIGHTS_PAGE_SIZE;
+  const olderOffset = data.offset + HIGHLIGHTS_PAGE_SIZE;
+  if (olderOffset < data.total && olderOffset <= HIGHLIGHTS_MAX_OFFSET) {
     links.push(
       `<a href="${escapeHtml(queryString(data.filters, olderOffset))}">older &rarr;</a>`,
     );
@@ -90,16 +100,27 @@ function pager(data: HighlightsPageData): string {
   return `\n  <nav class="pager" aria-label="pagination">${links.join("\n    ")}</nav>`;
 }
 
-/** Empty-state copy: distinguishes a fresh DB from over-narrow filters. */
+/**
+ * Empty-state copy. Three cases, most specific first:
+ *   - paged past the last row (offset > 0): the newer link still applies,
+ *     so tell the reader they've gone too far back, not that the DB is empty.
+ *   - filters active on the first page: the filters are too narrow.
+ *   - first page, no filters: the DB genuinely has nothing yet.
+ */
 function emptyState(data: HighlightsPageData): string {
   const filtered =
     data.filters.tier !== undefined ||
     data.filters.team !== undefined ||
     data.filters.position !== undefined ||
     data.filters.base !== undefined;
-  const message = filtered
-    ? "no plays match these filters."
-    : "no plays tracked yet.";
+  let message: string;
+  if (data.offset > 0) {
+    message = "nothing this far back.";
+  } else if (filtered) {
+    message = "no plays match these filters.";
+  } else {
+    message = "no plays tracked yet.";
+  }
   return `<p class="empty">${message}</p>`;
 }
 

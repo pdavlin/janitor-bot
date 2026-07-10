@@ -21,8 +21,8 @@ const NAV_ITEMS: ReadonlyArray<{ page: NavPage; href: string; label: string }> =
 export interface PageShellOptions {
   /** Document title, e.g. "janitor-bot · season". */
   title: string;
-  /** Which nav item to mark as the current page. */
-  active: NavPage;
+  /** Which nav item to mark as the current page; null marks none (error page). */
+  active: NavPage | null;
   /** Page body markup, rendered inside <main class="flow">. */
   body: string;
   /** Optional markup appended after the footer (tooltips, inline scripts). */
@@ -30,7 +30,7 @@ export interface PageShellOptions {
 }
 
 /** Renders one nav link, marking the active page with aria-current. */
-function navLink(item: { page: NavPage; href: string; label: string }, active: NavPage): string {
+function navLink(item: { page: NavPage; href: string; label: string }, active: NavPage | null): string {
   const current = item.page === active ? ' aria-current="page"' : "";
   return `<a class="nav-link" href="${item.href}"${current}>${item.label}</a>`;
 }
