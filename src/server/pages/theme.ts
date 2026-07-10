@@ -340,6 +340,12 @@ thead th { color: var(--color-text-muted); font-weight: bold; }
   padding: 0 .4em; border-radius: 2px; }
 .pill.act { border-color: var(--accent-color); color: var(--color-text-accent); }
 .pill.confirmed { border-color: var(--base_0b); color: var(--base_0b); }
+.api-list { list-style: none; margin: .6rem 0 0; padding: 0;
+  display: grid; gap: .4rem; }
+.api-list li { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; }
+.api-list a { text-decoration-color: var(--accent-color); }
+.api-list .note { color: var(--color-text-muted); font-size: .8125rem;
+  margin: 0; padding: 0; border: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

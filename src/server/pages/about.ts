@@ -11,9 +11,36 @@
 
 import { renderPage } from "./shell";
 import { tierBadge } from "./components";
+import {
+  SCORE_HOME,
+  SCORE_3B,
+  SCORE_OTHER_BASE,
+  DIRECT_THROW_BONUS,
+  LONG_RELAY_PENALTY,
+  VIDEO_BONUS,
+  OVERTURN_PENALTY,
+  VELOCITY_BONUS,
+  VELOCITY_THRESHOLD_MPH,
+  TIER_HIGH_MIN,
+  TIER_MEDIUM_MIN,
+} from "../../detection/ranking";
 
 /** ASCII connector between pipeline stages. */
 const WIRE = `<div class="wire" aria-hidden="true"><span>|</span><span>v</span></div>`;
+
+/**
+ * Scoring numbers rendered into the tier-stage copy, derived from the
+ * exported ranking constants so the explainer and the scorer cannot drift.
+ * Penalties are shown as positive magnitudes ("subtracts 2").
+ */
+const RELAY_PENALTY_MAG = Math.abs(LONG_RELAY_PENALTY);
+const OVERTURN_PENALTY_MAG = Math.abs(OVERTURN_PENALTY);
+/** Highest total that still lands in "medium" (one below the high floor). */
+const TIER_MEDIUM_MAX = TIER_HIGH_MIN - 1;
+/** Highest total that still lands in "low" (one below the medium floor). */
+const TIER_LOW_MAX = TIER_MEDIUM_MIN - 1;
+/** Worked example: RF -> SS -> C relay to Home with video (scores medium). */
+const EXAMPLE_SCORE = SCORE_HOME + LONG_RELAY_PENALTY + VIDEO_BONUS;
 
 /** Renders the full about page HTML document. */
 export function renderAboutPage(): string {
@@ -62,18 +89,20 @@ export function renderAboutPage(): string {
       <h2>score the throw</h2>
       <p>
         Each play earns points and lands in one of three tiers. Target base
-        pays the most (Home 4, 3B 3, 2B 1). A direct throw adds 2; a relay
-        with 3+ fielders subtracts 2. Available video adds 1, and an out that
-        only stood because of a replay overturn subtracts 2.
+        pays the most (Home ${SCORE_HOME}, 3B ${SCORE_3B}, 2B ${SCORE_OTHER_BASE}).
+        A direct throw adds ${DIRECT_THROW_BONUS}; a relay with
+        3+ fielders subtracts ${RELAY_PENALTY_MAG}. Available video adds ${VIDEO_BONUS},
+        and an out that only stood because of a
+        replay overturn subtracts ${OVERTURN_PENALTY_MAG}.
       </p>
       <p>
-        A throw clocked at 95+ mph adds 1 more, on the rare play where
-        Statcast velocity is on hand.
+        A throw clocked at ${VELOCITY_THRESHOLD_MPH}+ mph adds ${VELOCITY_BONUS} more,
+        on the rare play where Statcast velocity is on hand.
       </p>
       <p>
-        Totals map to ${tierBadge("high")} (5+),
-        ${tierBadge("medium")} (3&ndash;4), and
-        ${tierBadge("low")} (0&ndash;2).
+        Totals map to ${tierBadge("high")} (${TIER_HIGH_MIN}+),
+        ${tierBadge("medium")} (${TIER_MEDIUM_MIN}&ndash;${TIER_MEDIUM_MAX}), and
+        ${tierBadge("low")} (0&ndash;${TIER_LOW_MAX}).
       </p>
       <div class="artifact">
         <span class="tag">real credit chain &middot; scores medium</span>
@@ -82,10 +111,10 @@ export function renderAboutPage(): string {
           <b>Home</b> &nbsp; video&nbsp;yes
         </div>
         <div class="calc">
-          <span>target base: Home</span><span class="op">+4</span>
-          <span>relay chain (3 segments)</span><span class="op">&minus;2</span>
-          <span>video available</span><span class="op">+1</span>
-          <span class="total">score 3 &rarr; ${tierBadge("medium")}</span><span class="op total">= 3</span>
+          <span>target base: Home</span><span class="op">+${SCORE_HOME}</span>
+          <span>relay chain (3 segments)</span><span class="op">&minus;${RELAY_PENALTY_MAG}</span>
+          <span>video available</span><span class="op">+${VIDEO_BONUS}</span>
+          <span class="total">score ${EXAMPLE_SCORE} &rarr; ${tierBadge("medium")}</span><span class="op total">= ${EXAMPLE_SCORE}</span>
         </div>
         <div class="note">A throw home would tier high on its own, but the cut
           through the shortstop is a relay &mdash; the &minus;2 penalty drops it
@@ -180,7 +209,35 @@ export function renderAboutPage(): string {
       </div>
     </fieldset>
 
-  </div>`;
+  </div>
+
+  <fieldset class="api">
+    <legend>api</legend>
+    <p>The same data behind these pages is served as JSON. All endpoints are
+      <code class="chain">GET</code> and take no auth.</p>
+    <ul class="api-list">
+      <li>
+        <a href="/plays"><code class="chain">/plays</code></a>
+        <span class="note">paged plays with tier / team / position / base and date filters</span>
+      </li>
+      <li>
+        <a href="/plays/today"><code class="chain">/plays/today</code></a>
+        <span class="note">just today's plays</span>
+      </li>
+      <li>
+        <a href="/plays/1"><code class="chain">/plays/:id</code></a>
+        <span class="note">a single play by numeric id</span>
+      </li>
+      <li>
+        <a href="/stats"><code class="chain">/stats</code></a>
+        <span class="note">aggregate tier, team, and fielder counts</span>
+      </li>
+      <li>
+        <a href="/health"><code class="chain">/health</code></a>
+        <span class="note">server, database, and scheduler status</span>
+      </li>
+    </ul>
+  </fieldset>`;
 
   return renderPage({ title: "janitor-bot · about", active: "about", body });
 }
