@@ -136,9 +136,23 @@ export function renderWeeklyChart(weeks: ChartRow[], ariaLabel: string): string 
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(ariaLabel)}">${parts.join("")}</svg>`;
 }
 
+/** X where hbar row labels start (after the swatch dot at cx=10). */
+const HBAR_LABEL_X = 20;
+
+/** Approximate advance width of one 11px glyph in the monospace stack. */
+const HBAR_LABEL_CHAR_W = 6.6;
+
+/** Gap between the end of the longest row label and the bar baseline. */
+const HBAR_LABEL_GAP = 8;
+
 /**
  * Charts 2 and 3: horizontal bars with a left label + swatch dot per row
  * and a direct count label at each bar tip.
+ *
+ * The left gutter is derived from the longest row label (11px monospace
+ * advance estimate) so longer label sets ("unfetched" on /ops) don't run
+ * under the bars, clamped to a third of the width so a pathological label
+ * cannot consume the plot area.
  */
 export function renderHBarChart(
   rows: ChartRow[],
@@ -146,7 +160,11 @@ export function renderHBarChart(
   ariaLabel: string,
 ): string {
   const W = 700;
-  const PL = 62;
+  const maxLabelChars = Math.max(...rows.map((r) => r.label.length));
+  const PL = Math.min(
+    Math.ceil(HBAR_LABEL_X + maxLabelChars * HBAR_LABEL_CHAR_W) + HBAR_LABEL_GAP,
+    Math.floor(W / 3),
+  );
   const PR = 34;
   const PT = 10;
   const PB = 26;
@@ -171,7 +189,7 @@ export function renderHBarChart(
     const yTop = cy - barH / 2;
     parts.push(
       `<circle cx="10" cy="${fmt(cy)}" r="4" fill="${row.color}"/>`,
-      `<text x="20" y="${fmt(cy + 3.5)}" text-anchor="start" font-size="11" class="t-ink">${escapeHtml(row.label)}</text>`,
+      `<text x="${HBAR_LABEL_X}" y="${fmt(cy + 3.5)}" text-anchor="start" font-size="11" class="t-ink">${escapeHtml(row.label)}</text>`,
       `<path d="${hbarPath(PL, yTop, Math.max(0.5, x(row.value) - PL), barH, 4)}" fill="${row.color}" ${markAttrs(String(row.value), `${row.label} · ${unitLabel}`)}/>`,
       `<text x="${fmt(x(row.value) + 6)}" y="${fmt(cy + 3.5)}" text-anchor="start" font-size="11" class="t-ink" font-variant-numeric="tabular-nums">${row.value}</text>`,
     );
