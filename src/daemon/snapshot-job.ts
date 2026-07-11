@@ -20,6 +20,19 @@ import { computePlayTally } from "../notifications/slack-votes-store";
 const TIER_REVIEW_THRESHOLD = 2;
 
 /**
+ * tier_review_reason written when the channel trashes a detected
+ * high/medium play. Displayed (as friendly copy) on the /ops page.
+ */
+export const TIER_REVIEW_REASON_DISAGREES_HIGH_OR_MEDIUM =
+  "channel_disagrees_high_or_medium";
+
+/**
+ * tier_review_reason written when the channel fires up a detected low
+ * play. Displayed (as friendly copy) on the /ops page.
+ */
+export const TIER_REVIEW_REASON_DISAGREES_LOW = "channel_disagrees_low";
+
+/**
  * Runs one pass of the snapshot job. Selects plays that are past their 24h
  * window and lack a snapshot, computes each one's tally, and inserts a
  * snapshot row.
@@ -114,10 +127,10 @@ function computeTierReviewFlag(
   trash: number,
 ): TierReviewFlag {
   if ((tier === "high" || tier === "medium") && trash >= TIER_REVIEW_THRESHOLD) {
-    return { flagged: true, reason: "channel_disagrees_high_or_medium" };
+    return { flagged: true, reason: TIER_REVIEW_REASON_DISAGREES_HIGH_OR_MEDIUM };
   }
   if (tier === "low" && fire >= TIER_REVIEW_THRESHOLD) {
-    return { flagged: true, reason: "channel_disagrees_low" };
+    return { flagged: true, reason: TIER_REVIEW_REASON_DISAGREES_LOW };
   }
   return { flagged: false, reason: null };
 }
