@@ -361,10 +361,9 @@ thead th { color: var(--color-text-muted); font-weight: bold; }
 .loved .rk { color: var(--color-text-muted); font-variant-numeric: tabular-nums;
   text-align: right; font-size: .8125rem; }
 .loved .play { min-width: 0; }
-.loved .hl { font-size: .875rem; line-height: 1.35; }
-.loved .hl .pos { color: var(--color-text-muted); }
-.loved .hl .arrow { color: var(--color-text-accent); padding: 0 .15em; }
-.loved .hl .cut { color: var(--color-text-muted); }
+/* loved/disputed headlines reuse the play card's .headline span scope,
+   one step smaller */
+.loved .headline, .disp .top .headline { font-size: .875rem; }
 .loved .sub { color: var(--color-text-muted); font-size: .72rem; margin-top: .1rem;
   display: flex; gap: .55rem; flex-wrap: wrap; align-items: center; }
 .chain-mini { letter-spacing: .5px; }
@@ -379,7 +378,6 @@ thead th { color: var(--color-text-muted); font-weight: bold; }
 .disp li:last-child { border-bottom: 0; }
 .disp .top { display: flex; flex-wrap: wrap; gap: .4rem .7rem; align-items: baseline;
   font-size: .8125rem; }
-.disp .top .name { font-size: .875rem; }
 .disp .reason { color: var(--color-text-muted); font-size: .72rem; }
 .decs { list-style: none; margin: .4rem 0 0; padding: 0; display: flex;
   flex-direction: column; gap: .1rem; }

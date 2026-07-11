@@ -16,7 +16,7 @@ import type {
   WeeklyCount,
 } from "../../storage/db";
 import { renderPage } from "./shell";
-import { escapeHtml, formatShortDate, yearOf } from "./components";
+import { dateSpan, emptyNote, escapeHtml, formatShortDate, share } from "./components";
 import {
   renderChartLegend,
   renderDataTable,
@@ -49,22 +49,14 @@ function baseColor(base: string): string {
   return "var(--chart-4)";
 }
 
-/** Percentage share of total, formatted to one decimal place. */
-function share(count: number, total: number): string {
-  if (total === 0) return "0.0%";
-  return `${((count / total) * 100).toFixed(1)}%`;
-}
-
 /** Season subhead, e.g. "378 outfield assists tracked · Mar 10 – Jun 23, 2026". */
 function subhead(data: SeasonPageData): string {
   const count = `${data.totalPlays} outfield assist${data.totalPlays === 1 ? "" : "s"} tracked`;
   if (!data.oldestPlay || !data.newestPlay) return count;
-  const year = yearOf(data.newestPlay);
-  const span = `${formatShortDate(data.oldestPlay)} &ndash; ${formatShortDate(data.newestPlay)}${year ? `, ${year}` : ""}`;
-  return `${count} &middot; ${span}`;
+  return `${count} &middot; ${dateSpan(data.oldestPlay, data.newestPlay)}`;
 }
 
-const EMPTY_NOTE = `<p class="empty">no data yet.</p>`;
+const EMPTY_NOTE = emptyNote("no data yet.");
 
 /** Chart 1: plays per ISO week. */
 function weeklySection(data: SeasonPageData): string {
@@ -116,7 +108,7 @@ function tierSection(data: SeasonPageData): string {
     ${renderHBarChart(rows, "plays", aria)}
     ${renderDataTable(
       ["tier", "plays", "share"],
-      data.tiers.map((t) => [t.tier, String(t.count), share(t.count, data.totalPlays)]),
+      data.tiers.map((t) => [t.tier, String(t.count), share(t.count, data.totalPlays, 1)]),
     )}
   </fieldset>`;
 }
@@ -148,7 +140,7 @@ function baseSection(data: SeasonPageData): string {
     ${renderChartLegend(rows.map((r) => ({ label: r.label, color: r.color })))}
     ${renderDataTable(
       ["target base", "plays", "share"],
-      data.bases.map((b) => [b.base, String(b.count), share(b.count, data.totalPlays)]),
+      data.bases.map((b) => [b.base, String(b.count), share(b.count, data.totalPlays, 1)]),
     )}
   </fieldset>`;
 }
