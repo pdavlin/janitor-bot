@@ -13,6 +13,7 @@
 
 import { Database } from "bun:sqlite";
 import type { Tier, FetchStatus, DetectedPlay, StoredPlay } from "../types/play";
+import type { PlayEventDecision } from "../notifications/play-rematch-events-store";
 
 export type { DetectedPlay, StoredPlay } from "../types/play";
 
@@ -951,8 +952,8 @@ export function queryDistinctTeams(db: Database): string[] {
 
 /** Vote-engagement headline numbers for the /ops page. */
 export interface VoteEngagement {
-  /** Raw reaction events recorded (adds and removes). */
-  totalVotes: number;
+  /** Reactions added (action='added'); removal events are not votes cast. */
+  votesCast: number;
   /** Distinct Slack users who ever voted. */
   distinctVoters: number;
   /** Settled fire tally summed across vote snapshots. */
@@ -966,17 +967,20 @@ export interface VoteEngagement {
 }
 
 /**
- * Vote-engagement totals: raw event count and distinct voters from the
- * votes table; settled fire/trash tallies, voted-on plays, and snapshot
- * count from vote_snapshots (the per-play tallies captured at the end of
- * each post window).
+ * Vote-engagement totals: votes cast and distinct voters from the votes
+ * table; settled fire/trash tallies, voted-on plays, and snapshot count
+ * from vote_snapshots (the per-play tallies captured at the end of each
+ * post window). votes is an event log, so votes cast counts only
+ * action='added' rows — counting removals too would inflate the tile.
  */
 export function queryVoteEngagement(db: Database): VoteEngagement {
   const votes = db
     .prepare(
-      "SELECT COUNT(*) AS total, COUNT(DISTINCT user_id) AS voters FROM votes;",
+      `SELECT COALESCE(SUM(action = 'added'), 0) AS cast,
+         COUNT(DISTINCT user_id) AS voters
+       FROM votes;`,
     )
-    .get() as { total: number; voters: number };
+    .get() as { cast: number; voters: number };
   const snapshots = db
     .prepare(
       `SELECT COALESCE(SUM(fire_count), 0) AS fire,
@@ -987,7 +991,7 @@ export function queryVoteEngagement(db: Database): VoteEngagement {
     )
     .get() as { fire: number; trash: number; voted_on: number; total: number };
   return {
-    totalVotes: votes.total,
+    votesCast: votes.cast,
     distinctVoters: votes.voters,
     fireTotal: snapshots.fire,
     trashTotal: snapshots.trash,
@@ -1033,8 +1037,16 @@ interface VotedPlayRow {
 
 /**
  * Columns and join shared by queryMostLovedPlays / queryFlaggedSnapshots.
- * The join picks one plays row per (game_pk, play_index) via MIN(id) so a
- * double play (two runner rows) can't duplicate its snapshot.
+ *
+ * A double play stores one row per runner sharing (game_pk, play_index),
+ * while vote_snapshots keys on the play alone, so the join must pick one
+ * deterministic representative row: the lowest runner_id. This mirrors the
+ * row src/daemon/snapshot-job.ts's tier SELECT computed the tier_review
+ * flag against: that SELECT is an un-ordered LIMIT 1, which in practice
+ * walks the UNIQUE(game_pk, play_index, runner_id) index and returns the
+ * lowest runner_id. Keep the two selections in sync if either changes, or
+ * the disputed list could display a different runner/tier than the one the
+ * flag was decided on.
  */
 const VOTED_PLAY_SELECT = `
   SELECT s.fire_count, s.trash_count, s.net_score, s.voter_count,
@@ -1043,8 +1055,9 @@ const VOTED_PLAY_SELECT = `
     p.tier, p.credit_chain, p.away_team, p.home_team
   FROM vote_snapshots s
   JOIN plays p ON p.id = (
-    SELECT MIN(p2.id) FROM plays p2
-    WHERE p2.game_pk = s.game_pk AND p2.play_index = s.play_index)`;
+    SELECT p2.id FROM plays p2
+    WHERE p2.game_pk = s.game_pk AND p2.play_index = s.play_index
+    ORDER BY p2.runner_id ASC LIMIT 1)`;
 
 function rowToVotedPlay(row: VotedPlayRow): VotedPlay {
   return {
@@ -1121,13 +1134,15 @@ export function queryFetchStatusCounts(db: Database): FetchStatusCount[] {
 
 /** Event count per play_rematch_events decision. */
 export interface RematchDecisionCount {
-  decision: string;
+  /** Values are constrained by the table's CHECK to the domain union. */
+  decision: PlayEventDecision;
   count: number;
 }
 
 /**
  * Outcomes of rematch (:repeat:) and alternate-angle (:movie_camera:)
- * requests, counted per decision, most common first.
+ * requests, counted per decision, most common first. The decision column's
+ * CHECK constraint guarantees every value is a PlayEventDecision.
  */
 export function queryRematchDecisionCounts(db: Database): RematchDecisionCount[] {
   const rows = db
@@ -1135,7 +1150,7 @@ export function queryRematchDecisionCounts(db: Database): RematchDecisionCount[]
       `SELECT decision, COUNT(*) AS count FROM play_rematch_events
        GROUP BY decision ORDER BY count DESC, decision ASC;`,
     )
-    .all() as { decision: string; count: number }[];
+    .all() as { decision: PlayEventDecision; count: number }[];
   return rows;
 }
 

@@ -17,8 +17,21 @@ import type {
   VotedPlay,
   VoteEngagement,
 } from "../../storage/db";
+import type { PlayEventDecision } from "../../notifications/play-rematch-events-store";
+import {
+  TIER_REVIEW_REASON_DISAGREES_HIGH_OR_MEDIUM,
+  TIER_REVIEW_REASON_DISAGREES_LOW,
+} from "../../daemon/snapshot-job";
 import { renderPage } from "./shell";
-import { escapeHtml, formatShortDate, statTile, tierBadge, yearOf } from "./components";
+import {
+  dateSpan,
+  emptyNote,
+  escapeHtml,
+  playHeadline,
+  share,
+  statTile,
+  tierBadge,
+} from "./components";
 import {
   renderDataTable,
   renderHBarChart,
@@ -40,12 +53,12 @@ export interface OpsPageData {
   newestPlay: string | null;
 }
 
-const EMPTY_NOTE = (text: string): string => `<p class="empty">${text}</p>`;
-
-/** Percentage share of total as a whole number (mockup style: "64%"). */
-function share(count: number, total: number): string {
-  if (total === 0) return "0%";
-  return `${Math.round((count / total) * 100)}%`;
+/** Wraps a section head + body in the page's standard block markup. */
+function section(head: string, body: string): string {
+  return `<div>
+      <p class="section-head">${head}</p>
+      ${body}
+    </div>`;
 }
 
 /** Signed net score with a typographic minus, e.g. "+3" / "−2". */
@@ -58,11 +71,6 @@ function voteTally(play: VotedPlay): string {
   return `<span class="vtally"><span class="up">\u{1F525} ${play.fireCount}</span><span class="dn">\u{1F5D1} ${play.trashCount}</span><span class="net">${formatNet(play.netScore)}</span></span>`;
 }
 
-/** Headline fragment: "Name (POS) ⟶ Base · cut down Runner" (pre-escaped). */
-function playHeadline(play: VotedPlay): string {
-  return `${escapeHtml(play.fielderName)} <span class="pos">(${escapeHtml(play.fielderPosition)})</span><span class="arrow">&#10230;</span>${escapeHtml(play.targetBase)} <span class="cut">&middot; cut down ${escapeHtml(play.runnerName)}</span>`;
-}
-
 // ---------------------------------------------------------------------------
 // Engagement section
 // ---------------------------------------------------------------------------
@@ -72,8 +80,8 @@ function engagementTiles(engagement: VoteEngagement): string {
   const tiles = [
     statTile(
       "votes cast",
-      String(engagement.totalVotes),
-      `\u{1F525} ${engagement.fireTotal} · \u{1F5D1} ${engagement.trashTotal} across ${engagement.playsVotedOn} plays`,
+      String(engagement.votesCast),
+      `\u{1F525} ${engagement.fireTotal} · \u{1F5D1} ${engagement.trashTotal} settled across ${engagement.playsVotedOn} plays`,
     ),
     statTile(
       "plays voted on",
@@ -94,11 +102,9 @@ function engagementTiles(engagement: VoteEngagement): string {
 
 /** Most-loved list: rank, headline, tier/chain/matchup sub-line, tally. */
 function mostLovedSection(loved: VotedPlay[]): string {
+  const head = "most loved &middot; top net score";
   if (loved.length === 0) {
-    return `<div>
-      <p class="section-head">most loved &middot; top net score</p>
-      ${EMPTY_NOTE("no plays with a positive net score yet.")}
-    </div>`;
+    return section(head, emptyNote("no plays with a positive net score yet."));
   }
 
   const items = loved
@@ -106,7 +112,7 @@ function mostLovedSection(loved: VotedPlay[]): string {
       (play, i) => `<li>
         <span class="rk">${i + 1}</span>
         <span class="play">
-          <span class="hl">${playHeadline(play)}</span>
+          <span class="headline">${playHeadline(play)}</span>
           <span class="sub">${tierBadge(play.tier)}
             <span class="chain-mini">${escapeHtml(play.creditChain)}</span> &middot;
             ${escapeHtml(play.awayTeam)} @ ${escapeHtml(play.homeTeam)}</span>
@@ -116,24 +122,22 @@ function mostLovedSection(loved: VotedPlay[]): string {
     )
     .join("\n      ");
 
-  return `<div>
-      <p class="section-head">most loved &middot; top net score</p>
-      <ol class="loved">
+  return section(head, `<ol class="loved">
       ${items}
-      </ol>
-    </div>`;
+      </ol>`);
 }
 
 /**
- * Human-readable tier-review reason. Known snapshot reasons get the
- * mockup's copy; anything else falls back to the escaped raw value.
+ * Human-readable tier-review reason. The reason values are written by
+ * src/daemon/snapshot-job.ts (shared constants); anything unrecognised
+ * falls back to the escaped raw value.
  */
 function flagReason(play: VotedPlay): string {
   const voters = `${play.voterCount} voter${play.voterCount === 1 ? "" : "s"}`;
   const known: Record<string, string> = {
-    channel_disagrees_high_or_medium:
+    [TIER_REVIEW_REASON_DISAGREES_HIGH_OR_MEDIUM]:
       "channel disagrees — voted down a high/medium tier",
-    channel_disagrees_low: "channel disagrees — boosted a low tier",
+    [TIER_REVIEW_REASON_DISAGREES_LOW]: "channel disagrees — boosted a low tier",
   };
   const reason = play.tierReviewReason
     ? known[play.tierReviewReason] ?? escapeHtml(play.tierReviewReason)
@@ -144,10 +148,10 @@ function flagReason(play: VotedPlay): string {
 /** Disputed list: snapshots flagged for tier review. */
 function disputedSection(flagged: VotedPlay[]): string {
   if (flagged.length === 0) {
-    return `<div>
-      <p class="section-head">disputed &middot; flagged for tier review</p>
-      ${EMPTY_NOTE("nothing flagged for tier review.")}
-    </div>`;
+    return section(
+      "disputed &middot; flagged for tier review",
+      emptyNote("nothing flagged for tier review."),
+    );
   }
 
   const items = flagged
@@ -155,7 +159,7 @@ function disputedSection(flagged: VotedPlay[]): string {
       (play) => `<li>
         <div class="top">
           ${tierBadge(play.tier)}
-          <span class="name">${playHeadline(play)}</span>
+          <span class="headline">${playHeadline(play)}</span>
           ${voteTally(play)}
         </div>
         <div class="reason">${flagReason(play)}</div>
@@ -163,12 +167,12 @@ function disputedSection(flagged: VotedPlay[]): string {
     )
     .join("\n      ");
 
-  return `<div>
-      <p class="section-head">disputed &middot; flagged for tier review (${flagged.length})</p>
-      <ul class="disp">
+  return section(
+    `disputed &middot; flagged for tier review (${flagged.length})`,
+    `<ul class="disp">
       ${items}
-      </ul>
-    </div>`;
+      </ul>`,
+  );
 }
 
 /** The full engagement fieldset. */
@@ -213,10 +217,7 @@ function fetchStatusTableLabel(status: string): string {
 function fetchStatusSection(data: OpsPageData): string {
   const { fetchStatuses, totals } = data;
   if (fetchStatuses.length === 0) {
-    return `<div>
-      <p class="section-head">video fetch status</p>
-      ${EMPTY_NOTE("no plays tracked yet.")}
-    </div>`;
+    return section("video fetch status", emptyNote("no plays tracked yet."));
   }
 
   const rows: ChartRow[] = fetchStatuses.map((s) => ({
@@ -235,9 +236,9 @@ function fetchStatusSection(data: OpsPageData): string {
       : "";
   const note = `${unfetchedClause}${totals.withVideo} of ${totals.totalPlays} plays carry a video link.`;
 
-  return `<div>
-      <p class="section-head">video fetch status &middot; ${totals.totalPlays} plays</p>
-      <p class="chart-note">outcome of the highlight-video lookup per play.</p>
+  return section(
+    `video fetch status &middot; ${totals.totalPlays} plays`,
+    `<p class="chart-note">outcome of the highlight-video lookup per play.</p>
       ${renderHBarChart(rows, "plays", aria)}
       <p class="ops-note">${note}</p>
       ${renderDataTable(
@@ -247,35 +248,86 @@ function fetchStatusSection(data: OpsPageData): string {
           String(s.count),
           share(s.count, totals.totalPlays),
         ]),
-      )}
-    </div>`;
+      )}`,
+  );
+}
+
+/** Display metadata for one rematch/angle decision value. */
+interface DecisionMeta {
+  /** Row label, always paired with the colored dot (never color alone). */
+  label: string;
+  /** Color class: dec-found (teal), dec-swap (accent), dec-none (grey). */
+  cssClass: "dec-found" | "dec-swap" | "dec-none";
+  /** Legend copy explaining what the decision means. */
+  legend: string;
 }
 
 /**
- * Display metadata per rematch decision. Positive outcomes carry their own
- * color class; every other decision (agreed, deduped, errors) is neutral.
+ * One entry per PlayEventDecision domain value so no decision can fall
+ * into a mislabeled bucket: successful finds and confirmations are teal
+ * (the agent delivered or vouched for a clip), replacements are accent,
+ * and not-found / dedupe / error outcomes are grey.
  */
-function decisionMeta(decision: string): { label: string; cssClass: string } {
-  if (decision === "angle_found") return { label: "angle found", cssClass: "dec-found" };
-  if (decision === "swapped") return { label: "swapped", cssClass: "dec-swap" };
-  return { label: decision.replaceAll("_", " "), cssClass: "dec-none" };
-}
+const DECISION_META: Record<PlayEventDecision, DecisionMeta> = {
+  angle_found: {
+    label: "angle found",
+    cssClass: "dec-found",
+    legend: "a better angle was posted",
+  },
+  swapped: {
+    label: "swapped",
+    cssClass: "dec-swap",
+    legend: "original clip replaced",
+  },
+  agreed: {
+    label: "agreed",
+    cssClass: "dec-found",
+    legend: "agent confirmed the original clip",
+  },
+  no_match: {
+    label: "no match",
+    cssClass: "dec-none",
+    legend: "nothing found",
+  },
+  deduped: {
+    label: "deduped",
+    cssClass: "dec-none",
+    legend: "duplicate request, no action",
+  },
+  angle_no_alternate: {
+    label: "no alternate angle",
+    cssClass: "dec-none",
+    legend: "no other camera angle available",
+  },
+  angle_error: {
+    label: "angle error",
+    cssClass: "dec-none",
+    legend: "angle lookup failed",
+  },
+  angle_deduped: {
+    label: "angle deduped",
+    cssClass: "dec-none",
+    legend: "duplicate angle request, no action",
+  },
+};
 
-/** Rematch and angle decision bars with the inline color legend. */
+/** Rematch and angle decision bars with a legend derived from the data. */
 function rematchSection(decisions: RematchDecisionCount[]): string {
   if (decisions.length === 0) {
-    return `<div>
-      <p class="section-head">rematch &amp; angle decisions</p>
-      ${EMPTY_NOTE("no rematch or angle requests yet.")}
-    </div>`;
+    return section(
+      "rematch &amp; angle decisions",
+      emptyNote("no rematch or angle requests yet."),
+    );
   }
 
   const totalEvents = decisions.reduce((sum, d) => sum + d.count, 0);
-  const maxCount = decisions[0]!.count;
+  // Derived with Math.max rather than from row order: the SQL happens to
+  // sort DESC today, but the bars must not silently break if that changes.
+  const maxCount = Math.max(...decisions.map((d) => d.count));
   const items = decisions
     .map((d) => {
-      const meta = decisionMeta(d.decision);
-      const widthPct = maxCount === 0 ? "0%" : `${((d.count / maxCount) * 100).toFixed(1)}%`;
+      const meta = DECISION_META[d.decision];
+      const widthPct = `${((d.count / maxCount) * 100).toFixed(1)}%`;
       return `<li class="${meta.cssClass}">
         <span class="k"><span class="dot" aria-hidden="true"></span>${escapeHtml(meta.label)}</span>
         <span class="dec-track"><span class="dec-fill" style="width:${widthPct}"></span></span>
@@ -284,18 +336,26 @@ function rematchSection(decisions: RematchDecisionCount[]): string {
     })
     .join("\n      ");
 
-  return `<div>
-      <p class="section-head">rematch &amp; angle decisions &middot; ${totalEvents} event${totalEvents === 1 ? "" : "s"}</p>
-      <p class="chart-note">when a viewer reports a wrong or missing clip, the agent re-searches.</p>
+  // Legend derived from the decisions actually present, so it can never
+  // describe a bucket differently than the rows above it.
+  const legendEntries = decisions
+    .map((d) => DECISION_META[d.decision])
+    .map(
+      (meta) =>
+        `<span class="${meta.cssClass}"><span class="dot" aria-hidden="true"></span>${escapeHtml(meta.legend)}</span>`,
+    )
+    .join("\n        ");
+
+  return section(
+    `rematch &amp; angle decisions &middot; ${totalEvents} event${totalEvents === 1 ? "" : "s"}`,
+    `<p class="chart-note">when a viewer reports a wrong or missing clip, the agent re-searches.</p>
       <ul class="decs">
       ${items}
       </ul>
       <div class="legend-inline">
-        <span><span class="dot" style="background:var(--base_0b)"></span>a better angle was posted</span>
-        <span><span class="dot" style="background:var(--accent-color)"></span>original clip replaced</span>
-        <span><span class="dot" style="background:var(--base_03)"></span>nothing found</span>
-      </div>
-    </div>`;
+        ${legendEntries}
+      </div>`,
+  );
 }
 
 /** Context line for the throw-velocity tile, honest about the zero state. */
@@ -328,12 +388,12 @@ function totalsSection(data: OpsPageData): string {
     ),
   ].join("\n      ");
 
-  return `<div>
-      <p class="section-head">totals</p>
-      <div class="cluster tiles" role="list" aria-label="pipeline totals">
+  return section(
+    "totals",
+    `<div class="cluster tiles" role="list" aria-label="pipeline totals">
       ${tiles}
-      </div>
-    </div>`;
+      </div>`,
+  );
 }
 
 /** The full pipeline-health fieldset. */
@@ -359,9 +419,7 @@ function coverageNote(data: OpsPageData): string {
   const { totals } = data;
   const counts = `${totals.totalPlays} play${totals.totalPlays === 1 ? "" : "s"} across ${totals.distinctGames} game${totals.distinctGames === 1 ? "" : "s"}`;
   if (!data.oldestPlay || !data.newestPlay) return counts;
-  const year = yearOf(data.newestPlay);
-  const span = `${formatShortDate(data.oldestPlay)} &ndash; ${formatShortDate(data.newestPlay)}${year ? `, ${year}` : ""}`;
-  return `${counts} &middot; ${span}`;
+  return `${counts} &middot; ${dateSpan(data.oldestPlay, data.newestPlay)}`;
 }
 
 /** Renders the full ops page HTML document. */

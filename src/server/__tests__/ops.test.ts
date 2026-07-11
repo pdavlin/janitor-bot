@@ -232,11 +232,13 @@ function seedOpsFixtures(db: Database): void {
   );
   insertSnapshot(db, PLAY_OVERTURNED.gamePk, PLAY_OVERTURNED.playIndex, 0, 0, 0);
 
-  // Rematch/angle decisions: 2 angle_found, 1 swapped, 1 no_match.
+  // Rematch/angle decisions: 2 angle_found, 1 swapped, 1 no_match, and
+  // 1 agreed (a confirmation — must not be lumped with "nothing found").
   insertRematchEvent(db, PLAY_LOVED.gamePk, PLAY_LOVED.playIndex, "angle_found");
   insertRematchEvent(db, PLAY_LOVED.gamePk, PLAY_LOVED.playIndex, "angle_found");
   insertRematchEvent(db, PLAY_FLAGGED.gamePk, PLAY_FLAGGED.playIndex, "swapped");
   insertRematchEvent(db, PLAY_OVERTURNED.gamePk, PLAY_OVERTURNED.playIndex, "no_match");
+  insertRematchEvent(db, PLAY_LOVED.gamePk, PLAY_LOVED.playIndex, "agreed");
 }
 
 // ---------------------------------------------------------------------------
@@ -289,10 +291,12 @@ describe("GET /ops (seeded DB)", () => {
     expect(body).toContain("<legend>pipeline health</legend>");
     expect(body).toContain("vote engagement and pipeline health");
 
-    // Tiles: 6 vote events, 3 plays voted on of 4 snapshots, 2 voters.
+    // Tiles: 5 votes cast (the removal event is not a vote cast),
+    // 3 plays voted on of 4 snapshots, 2 voters.
     expect(body).toContain("<legend>votes cast</legend>");
-    expect(body).toContain(">6</span>");
-    expect(body).toContain("across 3 plays");
+    expect(body).toContain(">5</span>");
+    expect(body).not.toContain(">6</span>");
+    expect(body).toContain("settled across 3 plays");
     expect(body).toContain("<legend>plays voted on</legend>");
     expect(body).toContain("of 4 tier-review snapshots taken");
     expect(body).toContain("<legend>distinct voters</legend>");
@@ -308,9 +312,9 @@ describe("GET /ops (seeded DB)", () => {
     expect(body).not.toContain("Chandler Simpson");
     // Net-3 play ranks first.
     expect(body.indexOf("Andy Pages")).toBeLessThan(body.indexOf("Jones"));
-    // Tally + context markers.
+    // Tally + context markers (shared playHeadline fragment).
     expect(body).toContain('<span class="net">+3</span>');
-    expect(body).toContain("cut down Austin Martin");
+    expect(body).toContain('cut down</span> <span class="runner">Austin Martin</span>');
     expect(body).toContain("CF -&gt; SS -&gt; C");
     expect(body).toContain("LAD @ MIN");
   });
@@ -321,6 +325,29 @@ describe("GET /ops (seeded DB)", () => {
     expect(body).toContain("Wilyer Abreu");
     expect(body).toContain('<span class="net">−2</span>');
     expect(body).toContain("channel disagrees — voted down a high/medium tier &middot; 2 voters");
+  });
+
+  test("uses the lowest-runner_id row on a multi-runner (double play) snapshot", async () => {
+    // Two runner rows share (game_pk, play_index). The higher runner_id
+    // inserts first so rowid order disagrees with runner_id order: a
+    // MIN(id) join would show Runner B's row; the deterministic
+    // MIN(runner_id) representative (matching snapshot-job's tier SELECT)
+    // must show Runner A's.
+    const shared = { gamePk: 900001, playIndex: 3, fetchStatus: null, videoUrl: null, videoTitle: null };
+    insertPlays(db, [
+      makeMockPlay({ ...shared, runnerId: 700200, runnerName: "Runner B", tier: "low" }),
+      makeMockPlay({ ...shared, runnerId: 700100, runnerName: "Runner A", tier: "medium" }),
+    ]);
+    insertSnapshot(db, 900001, 3, 0, 2, 2, true, "channel_disagrees_high_or_medium");
+
+    const { body } = await getPage("/ops");
+    expect(body).toContain("disputed &middot; flagged for tier review (2)");
+    // One disputed row for the play, from the runner_id 700100 record.
+    expect(body).toContain("Runner A");
+    expect(body).not.toContain("Runner B");
+    // Its tier badge comes from the same representative row (medium, not
+    // the first-inserted low row): PLAY_FLAGGED plus this one.
+    expect(countOf(body, "tier tier-medium")).toBe(2);
   });
 
   test("renders the fetch-status chart with its data-table twin", async () => {
@@ -340,14 +367,30 @@ describe("GET /ops (seeded DB)", () => {
 
   test("renders rematch decision counts with color-classed bars", async () => {
     const { body } = await getPage("/ops");
-    expect(body).toContain("rematch &amp; angle decisions &middot; 4 events");
+    expect(body).toContain("rematch &amp; angle decisions &middot; 5 events");
     expect(body).toContain('<li class="dec-found">');
     expect(body).toContain('<li class="dec-swap">');
     expect(body).toContain('<li class="dec-none">');
     expect(body).toContain("angle found");
     expect(body).toContain("no match");
+    // 'agreed' is a confirmation: teal class, not the grey not-found bucket.
+    expect(body).toContain("agreed");
+    expect(countOf(body, '<li class="dec-found">')).toBe(2);
     // angle_found (2) is the max -> full-width bar.
     expect(body).toContain('style="width:100.0%"');
+  });
+
+  test("derives the legend from the decisions actually present", async () => {
+    const { body } = await getPage("/ops");
+    // One legend line per present decision, colored by its meaning.
+    expect(body).toContain("a better angle was posted");
+    expect(body).toContain("original clip replaced");
+    expect(body).toContain("nothing found");
+    expect(body).toContain("agent confirmed the original clip");
+    // Decisions absent from the data contribute no legend line.
+    expect(body).not.toContain("duplicate request, no action");
+    expect(body).not.toContain("no other camera angle available");
+    expect(body).not.toContain("angle lookup failed");
   });
 
   test("renders the pipeline totals tiles honestly", async () => {
