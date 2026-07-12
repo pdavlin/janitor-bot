@@ -60,6 +60,38 @@ export function statTile(
 </fieldset>`;
 }
 
+/** The play fields the shared headline fragment renders from. */
+export interface PlayHeadlineFields {
+  fielderName: string;
+  fielderPosition: string;
+  targetBase: string;
+  runnerName: string;
+}
+
+/**
+ * Shared headline fragment: "Name (POS) ⟶ Base · cut down Runner".
+ * Rendered inside an element carrying class="headline" (the shared CSS
+ * scope for the pos/arrow/cut/runner spans) by the play card and the /ops
+ * most-loved and disputed lists. All fields are escaped here.
+ */
+export function playHeadline(play: PlayHeadlineFields): string {
+  return `${escapeHtml(play.fielderName)} <span class="pos">(${escapeHtml(play.fielderPosition)})</span> <span class="arrow">&#10230;</span> ${escapeHtml(play.targetBase)} <span class="cut">&middot; cut down</span> <span class="runner">${escapeHtml(play.runnerName)}</span>`;
+}
+
+/**
+ * Percentage share of total, e.g. "64%" (decimals = 0) or "64.4%"
+ * (decimals = 1). A zero total renders as a zero share.
+ */
+export function share(count: number, total: number, decimals = 0): string {
+  if (total === 0) return `${(0).toFixed(decimals)}%`;
+  return `${((count / total) * 100).toFixed(decimals)}%`;
+}
+
+/** Muted empty-state paragraph shared by the section renderers. */
+export function emptyNote(text: string): string {
+  return `<p class="empty">${escapeHtml(text)}</p>`;
+}
+
 /** Formats the half inning for the matchup context line ("top 7" / "bot 3"). */
 function halfInningShort(halfInning: string, inning: number): string {
   const half = halfInning === "top" ? "top" : "bot";
@@ -125,7 +157,7 @@ export function playCard(play: StoredPlay): string {
     <span class="score">${play.awayScore}&ndash;${play.homeScore}</span>
     <span class="ctx">${ctx}</span>
   </div>
-  <p class="headline">${escapeHtml(play.fielderName)} <span class="pos">(${escapeHtml(play.fielderPosition)})</span> <span class="arrow">&#10230;</span> ${escapeHtml(play.targetBase)} <span class="cut">&middot; cut down</span> <span class="runner">${escapeHtml(play.runnerName)}</span></p>
+  <p class="headline">${playHeadline(play)}</p>
   <div class="chain-row">
     <div class="chain-scroll"><code class="chain">${chainHtml(play.creditChain)}</code></div>
     <span class="${kindClass}">${kindLabel}</span>
@@ -162,4 +194,14 @@ export function formatShortDate(isoDate: string): string {
 export function yearOf(isoDate: string): string | null {
   const match = isoDate.match(/^(\d{4})-/);
   return match ? match[1] : null;
+}
+
+/**
+ * Formats a coverage date span as pre-escaped HTML, e.g.
+ * "Mar 10 &ndash; Jun 23, 2026". Shared by the /season subhead and the
+ * /ops coverage note.
+ */
+export function dateSpan(oldest: string, newest: string): string {
+  const year = yearOf(newest);
+  return `${formatShortDate(oldest)} &ndash; ${formatShortDate(newest)}${year ? `, ${year}` : ""}`;
 }

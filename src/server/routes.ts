@@ -30,6 +30,12 @@ import {
   queryTeamsMostBurned,
   queryRecentHighTierPlays,
   queryDistinctTeams,
+  queryVoteEngagement,
+  queryMostLovedPlays,
+  queryFlaggedSnapshots,
+  queryFetchStatusCounts,
+  queryRematchDecisionCounts,
+  queryPipelineTotals,
 } from "../storage/db";
 import type { SchedulerStatus } from "../daemon/scheduler";
 import { renderHomePage } from "./pages/home";
@@ -41,6 +47,7 @@ import {
 } from "./pages/highlights";
 import { renderSeasonPage } from "./pages/season";
 import { renderAboutPage } from "./pages/about";
+import { renderOpsPage } from "./pages/ops";
 import { renderErrorPage } from "./pages/error";
 import { serveTeamAsset } from "./team-assets";
 import {
@@ -281,7 +288,13 @@ function parseHighlightsOffset(params: URLSearchParams): number {
 const TEAM_ASSET_ROUTE = /^\/assets\/teams\/([A-Za-z]{1,5})\.png$/;
 
 /** HTML page routes; an error on these returns a themed 500, not JSON. */
-const HTML_ROUTES = new Set<string>(["/", "/highlights", "/season", "/about"]);
+const HTML_ROUTES = new Set<string>([
+  "/",
+  "/highlights",
+  "/season",
+  "/about",
+  "/ops",
+]);
 
 /** Themed 500 document, built once (DB-free) and reused for HTML errors. */
 const ERROR_PAGE_HTML = renderErrorPage();
@@ -292,6 +305,7 @@ const KNOWN_ROUTES: Array<RegExp | string> = [
   "/highlights",
   "/season",
   "/about",
+  "/ops",
   "/plays",
   "/plays/today",
   /^\/plays\/\d+$/,
@@ -398,6 +412,29 @@ function handleSeasonPage(ctx: HandlerContext): Response {
       mix: queryDirectRelayByBase(ctx.db),
       leaders: queryArmLeaderboard(ctx.db),
       teamsBurned: queryTeamsMostBurned(ctx.db),
+    }),
+  );
+}
+
+/**
+ * GET /ops
+ *
+ * Internal dashboard (public, unlinked from the nav): vote engagement and
+ * pipeline health, computed from the DB at request time.
+ */
+function handleOpsPage(ctx: HandlerContext): Response {
+  const dbStats = getDbStats(ctx.db, ctx.dbPath);
+  return htmlResponse(
+    renderOpsPage({
+      engagement: queryVoteEngagement(ctx.db),
+      loved: queryMostLovedPlays(ctx.db),
+      flagged: queryFlaggedSnapshots(ctx.db),
+      fetchStatuses: queryFetchStatusCounts(ctx.db),
+      rematchDecisions: queryRematchDecisionCounts(ctx.db),
+      totals: queryPipelineTotals(ctx.db),
+      tiers: queryTierCounts(ctx.db),
+      oldestPlay: dbStats.oldestPlay,
+      newestPlay: dbStats.newestPlay,
     }),
   );
 }
@@ -541,7 +578,7 @@ async function handleSlackEvents(
  * Routes are matched in order:
  * 1. OPTIONS on any path (CORS preflight)
  * 2. GET / (home page)
- * 3. GET /highlights, /season, /about (HTML pages)
+ * 3. GET /highlights, /season, /about, /ops (HTML pages)
  * 4. GET /assets/teams/:abbr.png (team logos)
  * 5. GET /plays/today
  * 6. GET /plays/:id (numeric id)
@@ -639,6 +676,13 @@ export function startServer(deps: ServerDeps): HttpServer {
         // GET /about
         if (pathname === "/about") {
           response = htmlResponse(renderAboutPage());
+          logRequest(logger, req.method, pathname, response.status, start);
+          return response;
+        }
+
+        // GET /ops
+        if (pathname === "/ops") {
+          response = handleOpsPage(ctx);
           logRequest(logger, req.method, pathname, response.status, start);
           return response;
         }
