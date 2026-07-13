@@ -17,7 +17,7 @@
 import { fetchSchedule } from "../api/mlb-client";
 import type { ScheduleGame } from "../types/mlb-api";
 import { processGame, extractGameDate, scanDate } from "../pipeline";
-import { insertPlays } from "../storage/db";
+import { insertPlays, queryVelocityTopShare } from "../storage/db";
 import {
   filterByMinTier,
   type GameFinalScore,
@@ -333,6 +333,7 @@ async function handleFinalGame(
           scoresByGame,
           slackConfig,
           logger,
+          (velocityMph) => queryVelocityTopShare(db, velocityMph),
         );
         let headersSent = 0;
         let playsSent = 0;

@@ -15,7 +15,11 @@
 
 import type { Logger } from "../logger";
 import type { DetectedPlay } from "../types/play";
-import type { GameFinalScore, SlackPayload } from "./slack-formatter";
+import type {
+  GameFinalScore,
+  SlackPayload,
+  VelocityTopShareLookup,
+} from "./slack-formatter";
 import {
   buildGameHeaderMessage,
   buildGameMessage,
@@ -603,6 +607,7 @@ export async function sendGameNotifications(
   scoresByGame: Map<number, GameFinalScore>,
   config: SlackClientConfig,
   logger: Logger,
+  velocityTopShare?: VelocityTopShareLookup,
 ): Promise<PerGameNotificationResult[]> {
   if (plays.length === 0) {
     logger.debug("no plays to notify about");
@@ -637,7 +642,7 @@ export async function sendGameNotifications(
 
       const playResults: PerPlayNotificationResult[] = [];
       for (const play of gamePlays) {
-        const replyPayload = buildPlayReplyMessage(play);
+        const replyPayload = buildPlayReplyMessage(play, velocityTopShare);
         const replyResult = await postThreadMessage(
           config,
           headerResult.channel,
@@ -662,7 +667,7 @@ export async function sendGameNotifications(
       }
       results.push({ gamePk, header: headerResult, plays: playResults });
     } else {
-      const payload = buildGameMessage(gamePlays);
+      const payload = buildGameMessage(gamePlays, velocityTopShare);
       const result = await postMessage(config, payload, logger);
       results.push({
         gamePk,
