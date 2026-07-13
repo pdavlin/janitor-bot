@@ -8,6 +8,7 @@
 
 import type { StoredPlay } from "../../types/play";
 import type { Tier } from "../../types/play";
+import { chainSegments, isDirectThrow } from "../../detection/ranking";
 import { hasTeamAsset } from "../team-assets";
 
 /**
@@ -105,8 +106,7 @@ function runnersContext(runnersOn: string): string {
 
 /** Renders the credit chain as node/separator spans ("CF -> SS -> C"). */
 function chainHtml(creditChain: string): string {
-  return creditChain
-    .split(" -> ")
+  return chainSegments(creditChain)
     .map((node) => `<span class="node">${escapeHtml(node)}</span>`)
     .join('<span class="sep">-&gt;</span>');
 }
@@ -130,8 +130,7 @@ function isSafeHttpUrl(value: string): boolean {
  * the home page's recent-highlights list).
  */
 export function playCard(play: StoredPlay): string {
-  const segments = play.creditChain.split(" -> ").length;
-  const isDirect = segments === 2;
+  const isDirect = isDirectThrow(play.creditChain);
   const kindClass = isDirect ? "kind" : "kind relay";
   const kindLabel = isDirect ? "direct" : "relay";
 

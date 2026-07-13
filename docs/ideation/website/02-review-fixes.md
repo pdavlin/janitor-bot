@@ -82,32 +82,60 @@ weekly-review date-window tests in
 Run with the pinned bun if it is not on PATH:
 `/Users/pdavlin/.local/share/mise/installs/bun/1.3.14/bin/bun test`.
 
-## Deferred review debt (confirmed, not fixed — batch-2 candidates)
+## Paid down (2026-07-12)
 
-- **Direct-throw rule triple-encoded**: `ranking.ts` (split length), `components.ts`
-  playCard (same split), `db.ts` queryDirectRelayByBase (SQL length arithmetic,
-  magic 4 = separator length). One exported chain helper, or a persisted
-  segment-count column.
-- **Filter parser twin**: `parseHighlightsFilters` duplicates `parsePlayFilters`
-  field-by-field, differing only in lenient-vs-400 policy. One parser
-  parameterized on strictness.
-- **Route table**: `KNOWN_ROUTES` hand-mirrors the dispatch if-chain for
-  405-vs-404; a single `[{match, handler}]` table drives both.
-- **Team map duplication**: `team-assets.ts` TEAM_ASSET_FILES vs
-  `notifications/team-emoji.ts` TEAM_ABBREV_TO_EMOJI; drift test covers only the
-  latter.
-- **queryTierCounts** duplicates queryPlayStats' tier aggregate.
-- **highlights.ts** enumerates the four filter keys in three places (form,
-  queryString, emptyState).
-- **Form option constants** duplicate routes.ts VALID_* sets; `?base=1B` is
-  unreachable from the gallery while /season displays 1B rows.
+Structural dedups on branch `chore/website-debt-pass`, one commit each.
+All are pure refactors: `/`, `/highlights` (plus filter/offset variants),
+`/season`, `/about`, and `/ops` rendered byte-identical against the prod
+DB copy before and after every step, and the /season direct-vs-relay
+numbers were verified unchanged.
+
+- **Direct-throw rule triple-encoded** → `ranking.ts` now exports
+  `chainSegments`/`isDirectThrow`, consumed by `calculateTier`, the play
+  card's direct/relay label, and `queryDirectRelayByBase` (which fetches
+  base + credit_chain and counts in TS instead of SQL length arithmetic).
+- **Filter parser twin** → both parsers walk one `SHARED_FILTER_SPECS`
+  field spec in `routes.ts`; only the failure policy differs (strict 400
+  vs lenient ignore). Team keeps its policy split on purpose: raw
+  pass-through for the JSON API, uppercase + shape check for the gallery.
+- **Route table** → `GET_ROUTES` drives dispatch, 405-vs-404, and (via an
+  `html` flag) the themed-500 error path; `KNOWN_ROUTES` and the if-chain
+  are gone.
+- **Team map duplication** → `TEAM_ASSET_FILES` derives from
+  `TEAM_ABBREV_TO_EMOJI` plus a web-only alternates map
+  (AZ/KCR/SDP/SFG/TBR/WSN); the emoji drift test now covers the web map.
+- **queryTierCounts** → zero-fill/order wrapper over the tier aggregate
+  shared with `queryPlayStats` (`queryTotalByTier`).
+- **highlights.ts key triplication** → `FILTER_KEYS` is the single
+  enumeration driving the form, queryString, and emptyState.
+- **Form option constants** → `src/server/filter-options.ts` exports
+  TIER/POSITION/BASE_OPTIONS, consumed by routes.ts VALID_* sets and the
+  gallery form. 1B deliberately stays out of the domain (see below).
+- **season.ts section wrappers** → local `section()` helper (same pattern
+  as ops.ts's) collapses the six fieldset + empty-state copies.
+
+## Deferred review debt (confirmed, not fixed)
+
+- **1B unreachable from gallery** (behavior question, deliberately left):
+  `?base=1B` is not an accepted filter while /season displays legacy 1B
+  rows. Kept as-is — detection no longer emits 1B-target plays, so this
+  is a product call, not a refactor.
 - **theme.ts** carries page-specific CSS despite the shared-only contract; shell
-  needs a per-page CSS slot.
-- **season.ts** six section renderers copy-paste fieldset + empty-state wrappers.
+  needs a per-page CSS slot. Skipped: touches every page's markup contract,
+  out of scope for a byte-identical pass.
 - **Perf (all low-severity at current traffic)**: /season runs 9 uncached
   aggregates per hit; leaderboard correlated subquery re-aggregates per fielder;
   team assets stat+read per request; queryDistinctTeams UNION scan per gallery
   view; /about page rebuilt per request. Slack acks before dispatch, so none of
-  this threatens the 3s deadline today.
+  this threatens the 3s deadline today. Skipped: caching is not a pure refactor.
+  Note the direct-vs-relay aggregate now scans base + credit_chain rows in TS
+  instead of aggregating in SQL — same order of work at current row counts.
 - **Plausible-only**: single-node credit chains would be labeled "relay"
-  (requires anomalous feed data).
+  (requires anomalous feed data). Skipped: behavior change territory.
+- **Video-match first-match risk**: `matchVideoToPlay`
+  (`src/detection/video-match.ts`) picks the first content-API highlight
+  matching fielderId + defense keyword via `items.find`; a game with two
+  defense highlights tagged with the same fielder could match the wrong clip.
+  Not observed in prod (investigated 2026-07-12, play 823690/25 confirmed
+  correct); tighten by preferring the highlight whose description overlaps
+  the play description if this ever bites.

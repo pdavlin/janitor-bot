@@ -36,6 +36,29 @@ export const TIER_HIGH_MIN = 5;
 /** Minimum total score for the "medium" tier (below this is "low"). */
 export const TIER_MEDIUM_MIN = 3;
 
+/** Separator between fielders in a credit chain string ("RF -> SS -> C"). */
+const CHAIN_SEPARATOR = " -> ";
+
+/**
+ * Splits a credit chain into its fielder segments, e.g. "RF -> SS -> C"
+ * -> ["RF", "SS", "C"]. The chain format is produced by
+ * src/detection/detect.ts (position abbreviations joined with " -> ").
+ */
+export function chainSegments(creditChain: string): string[] {
+  return creditChain.split(CHAIN_SEPARATOR);
+}
+
+/**
+ * True when the credit chain records a direct throw: exactly two fielders
+ * (outfielder -> tagging fielder), no intermediary. This is the single
+ * encoding of the direct-vs-relay rule, shared by the tier scorer below,
+ * the play card's direct/relay label, and the /season direct-vs-relay
+ * aggregate (db.ts queryDirectRelayByBase).
+ */
+export function isDirectThrow(creditChain: string): boolean {
+  return chainSegments(creditChain).length === 2;
+}
+
 /**
  * The minimum fields needed from a detected play to calculate its tier.
  */
@@ -122,14 +145,13 @@ export function calculateTier(play: TierInput): Tier {
     score += SCORE_OTHER_BASE;
   }
 
-  // Direct throw bonus: exactly one " -> " means two players (fielder -> receiver)
-  const segments = play.creditChain.split(" -> ");
-  if (segments.length === 2) {
+  // Direct throw bonus: exactly two players (fielder -> receiver)
+  if (isDirectThrow(play.creditChain)) {
     score += DIRECT_THROW_BONUS;
   }
 
   // Relay penalty: 3+ fielders means 1+ intermediary (see longRelayPenalty)
-  score += longRelayPenalty(segments.length);
+  score += longRelayPenalty(chainSegments(play.creditChain).length);
 
   // Video availability bonus
   if (play.hasVideo) {

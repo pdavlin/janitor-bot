@@ -49,6 +49,7 @@ import { renderSeasonPage } from "./pages/season";
 import { renderAboutPage } from "./pages/about";
 import { renderOpsPage } from "./pages/ops";
 import { renderErrorPage } from "./pages/error";
+import { BASE_OPTIONS, POSITION_OPTIONS, TIER_OPTIONS } from "./filter-options";
 import { serveTeamAsset } from "./team-assets";
 import {
   verifySlackSignature,
@@ -137,9 +138,9 @@ function todayLocal(): string {
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 /** MLB team abbreviation shape (2-3 uppercase letters, e.g. LAD, KC). */
 const TEAM_ABBR_PATTERN = /^[A-Z]{2,3}$/;
-const VALID_TIERS = new Set<string>(["high", "medium", "low"]);
-const VALID_POSITIONS = new Set<string>(["LF", "CF", "RF"]);
-const VALID_BASES = new Set<string>(["2B", "3B", "Home"]);
+const VALID_TIERS = new Set<string>(TIER_OPTIONS);
+const VALID_POSITIONS = new Set<string>(POSITION_OPTIONS);
+const VALID_BASES = new Set<string>(BASE_OPTIONS);
 
 /**
  * Parses a string as a non-negative integer.
@@ -149,6 +150,107 @@ function parseNonNegativeInt(value: string): number | null {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 0) return null;
   return n;
+}
+
+/** Type guard narrowing a validated tier string to the Tier union. */
+function isTier(value: string): value is Tier {
+  return VALID_TIERS.has(value);
+}
+
+/** The filter fields shared by the JSON API and the HTML gallery. */
+type SharedFilterName = "tier" | "team" | "position" | "base";
+
+/**
+ * Spec for one shared filter field. `canonicalize` maps the raw query
+ * value to the stored filter value, or null when invalid; the policy
+ * decides what invalid means (see parseSharedFilters).
+ *
+ * Team is the one field whose canonical form is policy-dependent: the
+ * JSON API passes it through untouched (exact-match semantics), while the
+ * gallery uppercases and shape-checks it so the form never carries an
+ * invisible filter it can't render (the highlights handler additionally
+ * checks the value against the DB's distinct teams).
+ */
+interface SharedFilterSpec {
+  name: SharedFilterName;
+  /** 400 error body for the strict policy. */
+  invalidMessage: string;
+  canonicalize: (raw: string, strict: boolean) => string | null;
+}
+
+const SHARED_FILTER_SPECS: readonly SharedFilterSpec[] = [
+  {
+    name: "tier",
+    invalidMessage: `tier must be one of: ${TIER_OPTIONS.join(", ")}`,
+    canonicalize: (raw) => (VALID_TIERS.has(raw) ? raw : null),
+  },
+  {
+    // Never invalid under the strict policy, so invalidMessage can't fire.
+    name: "team",
+    invalidMessage: "team is invalid",
+    canonicalize: (raw, strict) => {
+      if (strict) return raw;
+      const upper = raw.toUpperCase();
+      return TEAM_ABBR_PATTERN.test(upper) ? upper : null;
+    },
+  },
+  {
+    name: "position",
+    invalidMessage: `position must be one of: ${POSITION_OPTIONS.join(", ")}`,
+    canonicalize: (raw) => (VALID_POSITIONS.has(raw) ? raw : null),
+  },
+  {
+    name: "base",
+    invalidMessage: `base must be one of: ${BASE_OPTIONS.join(", ")}`,
+    canonicalize: (raw) => (VALID_BASES.has(raw) ? raw : null),
+  },
+];
+
+/**
+ * Parses the shared tier/team/position/base fields off the query string.
+ * One spec walk serves both filter parsers; only the failure policy
+ * differs:
+ *
+ *   - strict (JSON API): an invalid value returns that field's 400 error
+ *     string, and empty-string values are validated like any other.
+ *   - lenient (gallery form): empty or invalid values are treated as
+ *     unset, since the page's own form only emits valid values.
+ */
+function parseSharedFilters(
+  params: URLSearchParams,
+  policy: "strict",
+): HighlightsFilters | string;
+function parseSharedFilters(
+  params: URLSearchParams,
+  policy: "lenient",
+): HighlightsFilters;
+function parseSharedFilters(
+  params: URLSearchParams,
+  policy: "strict" | "lenient",
+): HighlightsFilters | string {
+  const strict = policy === "strict";
+  const filters: HighlightsFilters = {};
+
+  for (const spec of SHARED_FILTER_SPECS) {
+    const raw = params.get(spec.name);
+    if (raw === null) continue;
+    if (!strict && raw === "") continue;
+
+    const value = spec.canonicalize(raw, strict);
+    if (value === null) {
+      if (strict) return spec.invalidMessage;
+      continue;
+    }
+
+    if (spec.name === "tier") {
+      // canonicalize guarantees VALID_TIERS membership; narrow for the type.
+      if (isTier(value)) filters.tier = value;
+    } else {
+      filters[spec.name] = value;
+    }
+  }
+
+  return filters;
 }
 
 /**
@@ -196,32 +298,12 @@ function parsePlayFilters(
   if (filters.from && filters.to && filters.from > filters.to) {
     return "from must not be after to";
   }
-  if (params.has("team")) filters.team = params.get("team")!;
+
+  const sharedOrError = parseSharedFilters(params, "strict");
+  if (typeof sharedOrError === "string") return sharedOrError;
+  Object.assign(filters, sharedOrError);
+
   if (params.has("fielder")) filters.fielder = params.get("fielder")!;
-
-  if (params.has("tier")) {
-    const tier = params.get("tier")!;
-    if (!VALID_TIERS.has(tier)) {
-      return "tier must be one of: high, medium, low";
-    }
-    filters.tier = tier as Tier;
-  }
-
-  if (params.has("position")) {
-    const position = params.get("position")!;
-    if (!VALID_POSITIONS.has(position)) {
-      return "position must be one of: LF, CF, RF";
-    }
-    filters.position = position;
-  }
-
-  if (params.has("base")) {
-    const base = params.get("base")!;
-    if (!VALID_BASES.has(base)) {
-      return "base must be one of: 2B, 3B, Home";
-    }
-    filters.base = base;
-  }
 
   if (params.has("limit")) {
     const limit = parseNonNegativeInt(params.get("limit")!);
@@ -240,34 +322,11 @@ function parsePlayFilters(
 }
 
 /**
- * Extracts HighlightsFilters from URL search params for the HTML gallery.
- *
- * Same value semantics as parsePlayFilters (tier/team/position/base), but
- * form-friendly: empty or invalid values are treated as unset instead of
- * producing a 400, since the page's own form only emits valid values.
+ * Extracts HighlightsFilters from URL search params for the HTML gallery:
+ * the shared field specs under the lenient policy.
  */
 function parseHighlightsFilters(params: URLSearchParams): HighlightsFilters {
-  const filters: HighlightsFilters = {};
-
-  const tier = params.get("tier");
-  if (tier && VALID_TIERS.has(tier)) filters.tier = tier as Tier;
-
-  // Team is a 2-3 letter MLB abbreviation. Anything else is dropped so the
-  // form never carries an invisible filter it can't render. The handler
-  // additionally checks the value against the DB's distinct teams.
-  const team = params.get("team");
-  if (team) {
-    const upper = team.toUpperCase();
-    if (TEAM_ABBR_PATTERN.test(upper)) filters.team = upper;
-  }
-
-  const position = params.get("position");
-  if (position && VALID_POSITIONS.has(position)) filters.position = position;
-
-  const base = params.get("base");
-  if (base && VALID_BASES.has(base)) filters.base = base;
-
-  return filters;
+  return parseSharedFilters(params, "lenient");
 }
 
 /**
@@ -287,42 +346,11 @@ function parseHighlightsOffset(params: URLSearchParams): number {
 /** Matches GET /assets/teams/:abbr.png. */
 const TEAM_ASSET_ROUTE = /^\/assets\/teams\/([A-Za-z]{1,5})\.png$/;
 
-/** HTML page routes; an error on these returns a themed 500, not JSON. */
-const HTML_ROUTES = new Set<string>([
-  "/",
-  "/highlights",
-  "/season",
-  "/about",
-  "/ops",
-]);
+/** Matches GET /plays/:id (numeric segment after /plays/). */
+const PLAY_BY_ID_ROUTE = /^\/plays\/(\d+)$/;
 
 /** Themed 500 document, built once (DB-free) and reused for HTML errors. */
 const ERROR_PAGE_HTML = renderErrorPage();
-
-/** Known route patterns for 405 detection. */
-const KNOWN_ROUTES: Array<RegExp | string> = [
-  "/",
-  "/highlights",
-  "/season",
-  "/about",
-  "/ops",
-  "/plays",
-  "/plays/today",
-  /^\/plays\/\d+$/,
-  "/stats",
-  "/health",
-  TEAM_ASSET_ROUTE,
-];
-
-/**
- * Returns true when the pathname matches one of the API's known routes.
- * Used to distinguish 405 (wrong method on valid route) from 404.
- */
-function matchesKnownRoute(pathname: string): boolean {
-  return KNOWN_ROUTES.some((route) =>
-    typeof route === "string" ? route === pathname : route.test(pathname),
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Route handlers
@@ -569,6 +597,83 @@ async function handleSlackEvents(
 }
 
 // ---------------------------------------------------------------------------
+// Route table
+// ---------------------------------------------------------------------------
+
+/**
+ * One GET route: an exact path or a pattern, its handler, and (for HTML
+ * pages) the flag that routes unhandled errors to the themed 500 page.
+ * Pattern handlers receive the pathname match so they can read capture
+ * groups.
+ */
+type GetRoute =
+  | {
+      path: string;
+      /** True for HTML pages: an unhandled error returns the themed 500. */
+      html?: true;
+      handle: (
+        ctx: HandlerContext,
+        params: URLSearchParams,
+      ) => Response | Promise<Response>;
+    }
+  | {
+      pattern: RegExp;
+      handle: (
+        ctx: HandlerContext,
+        params: URLSearchParams,
+        match: RegExpMatchArray,
+      ) => Response | Promise<Response>;
+    };
+
+/**
+ * The GET route table, in match order (exact paths first, then patterns,
+ * mirroring the precedence documented on startServer). One table drives
+ * dispatch, the 405-vs-404 distinction for non-GET methods, and the
+ * HTML-vs-JSON error shape, so a route can't be known to one and not
+ * another.
+ */
+const GET_ROUTES: readonly GetRoute[] = [
+  { path: "/", html: true, handle: handleHomePage },
+  { path: "/highlights", html: true, handle: handleHighlightsPage },
+  { path: "/season", html: true, handle: handleSeasonPage },
+  { path: "/about", html: true, handle: () => htmlResponse(renderAboutPage()) },
+  { path: "/ops", html: true, handle: handleOpsPage },
+  {
+    pattern: TEAM_ASSET_ROUTE,
+    handle: (_ctx, _params, match) => serveTeamAsset(match[1], CORS_HEADERS),
+  },
+  {
+    path: "/plays/today",
+    handle: (ctx: HandlerContext, params: URLSearchParams) =>
+      handlePlays(ctx, params, todayLocal()),
+  },
+  {
+    pattern: PLAY_BY_ID_ROUTE,
+    handle: (ctx, _params, match) => handlePlayById(ctx, match[1]),
+  },
+  { path: "/plays", handle: handlePlays },
+  { path: "/stats", handle: handleStats },
+  { path: "/health", handle: handleHealth },
+];
+
+/**
+ * Returns true when the pathname matches one of the API's known routes.
+ * Used to distinguish 405 (wrong method on valid route) from 404.
+ */
+function matchesKnownRoute(pathname: string): boolean {
+  return GET_ROUTES.some((route) =>
+    "path" in route ? route.path === pathname : route.pattern.test(pathname),
+  );
+}
+
+/** HTML page paths; an unhandled error on these returns a themed 500, not JSON. */
+const HTML_ROUTE_PATHS = new Set<string>(
+  GET_ROUTES.flatMap((route) =>
+    "path" in route && route.html ? [route.path] : [],
+  ),
+);
+
+// ---------------------------------------------------------------------------
 // Server factory
 // ---------------------------------------------------------------------------
 
@@ -577,15 +682,11 @@ async function handleSlackEvents(
  *
  * Routes are matched in order:
  * 1. OPTIONS on any path (CORS preflight)
- * 2. GET / (home page)
- * 3. GET /highlights, /season, /about, /ops (HTML pages)
- * 4. GET /assets/teams/:abbr.png (team logos)
- * 5. GET /plays/today
- * 6. GET /plays/:id (numeric id)
- * 7. GET /plays
- * 8. GET /stats
- * 9. GET /health
- * 10. Everything else -> 404
+ * 2. POST /slack/events
+ * 3. GET routes in GET_ROUTES table order (HTML pages, team assets,
+ *    then the JSON API)
+ * 4. Everything else -> 404 (or 405 when a non-GET method hits a
+ *    known GET route)
  *
  * @param deps - Injected dependencies (database, logger, port, scheduler status getter)
  * @returns The running Bun Server instance
@@ -652,81 +753,16 @@ export function startServer(deps: ServerDeps): HttpServer {
           return response;
         }
 
-        // GET /
-        if (pathname === "/") {
-          response = handleHomePage(ctx);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /highlights
-        if (pathname === "/highlights") {
-          response = handleHighlightsPage(ctx, url.searchParams);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /season
-        if (pathname === "/season") {
-          response = handleSeasonPage(ctx);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /about
-        if (pathname === "/about") {
-          response = htmlResponse(renderAboutPage());
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /ops
-        if (pathname === "/ops") {
-          response = handleOpsPage(ctx);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /assets/teams/:abbr.png
-        const teamAssetMatch = pathname.match(TEAM_ASSET_ROUTE);
-        if (teamAssetMatch) {
-          response = await serveTeamAsset(teamAssetMatch[1], CORS_HEADERS);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /plays/today
-        if (pathname === "/plays/today") {
-          response = handlePlays(ctx, url.searchParams, todayLocal());
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /plays/:id (numeric segment after /plays/)
-        const playByIdMatch = pathname.match(/^\/plays\/(\d+)$/);
-        if (playByIdMatch) {
-          response = handlePlayById(ctx, playByIdMatch[1]);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /plays
-        if (pathname === "/plays") {
-          response = handlePlays(ctx, url.searchParams);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /stats
-        if (pathname === "/stats") {
-          response = handleStats(ctx, url.searchParams);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /health
-        if (pathname === "/health") {
-          response = handleHealth(ctx);
+        // GET routes, in table order
+        for (const route of GET_ROUTES) {
+          if ("path" in route) {
+            if (route.path !== pathname) continue;
+            response = await route.handle(ctx, url.searchParams);
+          } else {
+            const match = pathname.match(route.pattern);
+            if (!match) continue;
+            response = await route.handle(ctx, url.searchParams, match);
+          }
           logRequest(logger, req.method, pathname, response.status, start);
           return response;
         }
@@ -744,7 +780,7 @@ export function startServer(deps: ServerDeps): HttpServer {
         });
         // HTML routes get a themed 500 page; JSON routes keep the JSON error.
         response =
-          req.method === "GET" && HTML_ROUTES.has(pathname)
+          req.method === "GET" && HTML_ROUTE_PATHS.has(pathname)
             ? htmlResponse(ERROR_PAGE_HTML, 500)
             : jsonResponse({ error: "Internal server error" }, 500);
         logRequest(logger, req.method, pathname, response.status, start);
