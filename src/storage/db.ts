@@ -35,6 +35,8 @@ export interface PlayFilters {
   tier?: Tier;
   /** Partial match on fielder_name (LIKE '%value%'). */
   fielder?: string;
+  /** Exact match on fielder_id (used by the fielder profile page). */
+  fielderId?: number;
   /** Exact match on game_pk. */
   gamePk?: number;
   /** Start of date range, inclusive (YYYY-MM-DD). */
@@ -612,6 +614,11 @@ function buildWhereClause(filters?: PlayFilters): {
     params.$fielder = `%${filters.fielder}%`;
   }
 
+  if (filters?.fielderId !== undefined) {
+    conditions.push("fielder_id = $fielderId");
+    params.$fielderId = filters.fielderId;
+  }
+
   if (filters?.gamePk) {
     conditions.push("game_pk = $gamePk");
     params.$gamePk = filters.gamePk;
@@ -797,6 +804,8 @@ export interface BaseThrowMix {
 
 /** One row of the arm leaderboard. */
 export interface FielderLeader {
+  /** MLB player id, used to link the row to /fielders/:id. */
+  fielderId: number;
   fielderName: string;
   /** The position this fielder recorded the most assists from. */
   position: string;
@@ -896,7 +905,8 @@ export function queryDirectRelayByBase(db: Database): BaseThrowMix[] {
 export function queryArmLeaderboard(db: Database, limit = 10): FielderLeader[] {
   const rows = db
     .prepare(
-      `SELECT MAX(fielder_name) AS fielder_name,
+      `SELECT fielder_id,
+         MAX(fielder_name) AS fielder_name,
          (SELECT p2.fielder_position FROM plays p2
           WHERE p2.fielder_id = p.fielder_id
           GROUP BY p2.fielder_position
@@ -911,6 +921,7 @@ export function queryArmLeaderboard(db: Database, limit = 10): FielderLeader[] {
        LIMIT $limit;`,
     )
     .all({ $limit: limit }) as {
+      fielder_id: number;
       fielder_name: string;
       position: string;
       total: number;
@@ -919,6 +930,7 @@ export function queryArmLeaderboard(db: Database, limit = 10): FielderLeader[] {
       low: number;
     }[];
   return rows.map((r) => ({
+    fielderId: r.fielder_id,
     fielderName: r.fielder_name,
     position: r.position,
     total: r.total,
@@ -931,17 +943,26 @@ export function queryArmLeaderboard(db: Database, limit = 10): FielderLeader[] {
 /**
  * Teams whose runners were cut down the most. The runner's team is the
  * batting side: the away team in the top half, the home team in the bottom.
+ * Pass a fielderId to scope the tally to one fielder's victims (the
+ * profile page's teams-burned list).
  */
-export function queryTeamsMostBurned(db: Database, limit = 10): TeamBurnCount[] {
+export function queryTeamsMostBurned(
+  db: Database,
+  limit = 10,
+  fielderId?: number,
+): TeamBurnCount[] {
+  const where = fielderId === undefined ? "" : "WHERE fielder_id = $fielderId";
+  const params: Record<string, number> = { $limit: limit };
+  if (fielderId !== undefined) params.$fielderId = fielderId;
   const rows = db
     .prepare(
       `SELECT CASE half_inning WHEN 'top' THEN away_team ELSE home_team END AS team,
          COUNT(*) AS count
-       FROM plays
+       FROM plays ${where}
        GROUP BY team ORDER BY count DESC, team ASC
        LIMIT $limit;`,
     )
-    .all({ $limit: limit }) as { team: string; count: number }[];
+    .all(params) as { team: string; count: number }[];
   return rows;
 }
 
@@ -976,6 +997,286 @@ export function queryDistinctTeams(db: Database): string[] {
     )
     .all() as { team: string }[];
   return rows.map((r) => r.team);
+}
+
+// ---------------------------------------------------------------------------
+// Cannon aggregates (batch 3: throw map, velocity charts, fielder pages)
+// ---------------------------------------------------------------------------
+
+/** Throws grouped by (fielder position, target base), for the throw maps. */
+export interface ThrowLane {
+  position: string;
+  base: string;
+  count: number;
+}
+
+/** One row of the cannon rankings: a fielder's peak measured velocity. */
+export interface CannonLeader {
+  /** MLB player id, used to link the row to /fielders/:id. */
+  fielderId: number;
+  fielderName: string;
+  /** The position this fielder recorded the most assists from. */
+  position: string;
+  /** Hardest measured throw, mph. */
+  maxVelocity: number;
+  /** Mean of this fielder's measured throws, mph. */
+  avgVelocity: number;
+  /** How many of the fielder's plays carry a measured velocity. */
+  throwCount: number;
+}
+
+/** One measured throw, for the velocity beeswarm and position strips. */
+export interface MeasuredThrow {
+  fielderName: string;
+  position: string;
+  base: string;
+  /** Throw velocity, mph. */
+  velocity: number;
+}
+
+/**
+ * Season-wide measured-velocity summary: coverage plus the min/max/avg of
+ * the measured throws. min/max/avg are null when nothing is measured yet.
+ */
+export interface VelocitySummary {
+  /** All tracked plays. */
+  total: number;
+  /** Plays carrying a Statcast throw velocity. */
+  measured: number;
+  min: number | null;
+  max: number | null;
+  avg: number | null;
+}
+
+/**
+ * Assist counts per (position, base) lane, ordered densest first. Pass a
+ * fielderId to scope the lanes to one fielder (the profile mini map);
+ * omit it for the league-wide /season throw map.
+ */
+export function queryThrowLanes(db: Database, fielderId?: number): ThrowLane[] {
+  const where = fielderId === undefined ? "" : "WHERE fielder_id = $fielderId";
+  const params: Record<string, number> = {};
+  if (fielderId !== undefined) params.$fielderId = fielderId;
+  const rows = db
+    .prepare(
+      `SELECT fielder_position, target_base, COUNT(*) AS count
+       FROM plays ${where}
+       GROUP BY fielder_position, target_base
+       ORDER BY count DESC, fielder_position ASC, target_base ASC;`,
+    )
+    .all(params) as { fielder_position: string; target_base: string; count: number }[];
+  return rows.map((r) => ({ position: r.fielder_position, base: r.target_base, count: r.count }));
+}
+
+/**
+ * Top fielders by single hardest measured throw. Position follows the
+ * arm-leaderboard convention: the one the fielder recorded the most
+ * assists from (ties broken alphabetically).
+ */
+export function queryCannonRankings(db: Database, limit = 10): CannonLeader[] {
+  const rows = db
+    .prepare(
+      `SELECT fielder_id,
+         MAX(fielder_name) AS fielder_name,
+         (SELECT p2.fielder_position FROM plays p2
+          WHERE p2.fielder_id = p.fielder_id
+          GROUP BY p2.fielder_position
+          ORDER BY COUNT(*) DESC, p2.fielder_position ASC LIMIT 1) AS position,
+         MAX(throw_velocity) AS max_velocity,
+         AVG(throw_velocity) AS avg_velocity,
+         COUNT(*) AS throw_count
+       FROM plays p
+       WHERE throw_velocity IS NOT NULL
+       GROUP BY fielder_id
+       ORDER BY max_velocity DESC, fielder_name ASC
+       LIMIT $limit;`,
+    )
+    .all({ $limit: limit }) as {
+      fielder_id: number;
+      fielder_name: string;
+      position: string;
+      max_velocity: number;
+      avg_velocity: number;
+      throw_count: number;
+    }[];
+  return rows.map((r) => ({
+    fielderId: r.fielder_id,
+    fielderName: r.fielder_name,
+    position: r.position,
+    maxVelocity: r.max_velocity,
+    avgVelocity: r.avg_velocity,
+    throwCount: r.throw_count,
+  }));
+}
+
+/**
+ * Every measured throw, velocity ascending. Pass a fielderId to scope to
+ * one fielder (the profile velocity strip); omit for the season beeswarm
+ * and position strips.
+ */
+export function queryMeasuredThrows(db: Database, fielderId?: number): MeasuredThrow[] {
+  const scope = fielderId === undefined ? "" : "AND fielder_id = $fielderId";
+  const params: Record<string, number> = {};
+  if (fielderId !== undefined) params.$fielderId = fielderId;
+  const rows = db
+    .prepare(
+      `SELECT fielder_name, fielder_position, target_base, throw_velocity
+       FROM plays
+       WHERE throw_velocity IS NOT NULL ${scope}
+       ORDER BY throw_velocity ASC;`,
+    )
+    .all(params) as {
+      fielder_name: string;
+      fielder_position: string;
+      target_base: string;
+      throw_velocity: number;
+    }[];
+  return rows.map((r) => ({
+    fielderName: r.fielder_name,
+    position: r.fielder_position,
+    base: r.target_base,
+    velocity: r.throw_velocity,
+  }));
+}
+
+/** Coverage and range of measured throw velocities across the season. */
+export function queryVelocitySummary(db: Database): VelocitySummary {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS total,
+         COALESCE(SUM(throw_velocity IS NOT NULL), 0) AS measured,
+         MIN(throw_velocity) AS min,
+         MAX(throw_velocity) AS max,
+         AVG(throw_velocity) AS avg
+       FROM plays;`,
+    )
+    .get() as {
+      total: number;
+      measured: number;
+      min: number | null;
+      max: number | null;
+      avg: number | null;
+    };
+  return row;
+}
+
+/**
+ * Share (percent, 0-100) of the season's measured throws at or above the
+ * given velocity — "this throw is in the top X%". Returns null when no
+ * throws are measured yet, so callers can skip the flex line entirely.
+ */
+export function queryVelocityTopShare(db: Database, velocityMph: number): number | null {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS measured,
+         COALESCE(SUM(throw_velocity >= $mph), 0) AS at_or_above
+       FROM plays WHERE throw_velocity IS NOT NULL;`,
+    )
+    .get({ $mph: velocityMph }) as { measured: number; at_or_above: number };
+  if (row.measured === 0) return null;
+  return (row.at_or_above / row.measured) * 100;
+}
+
+// ---------------------------------------------------------------------------
+// Fielder profile (batch 3, /fielders/:id)
+// ---------------------------------------------------------------------------
+
+/** Headline numbers for one fielder's profile page. */
+export interface FielderProfile {
+  fielderId: number;
+  fielderName: string;
+  /** The position this fielder recorded the most assists from. */
+  position: string;
+  /**
+   * The team this fielder made the most assists for. The fielding side is
+   * the home team in the top half, the away team in the bottom.
+   */
+  team: string;
+  total: number;
+  high: number;
+  medium: number;
+  low: number;
+  /** Plays with a measured velocity. */
+  measured: number;
+  /** Hardest measured throw, mph. Null when nothing is measured. */
+  maxVelocity: number | null;
+  /** Date range of the fielder's tracked assists, YYYY-MM-DD. */
+  oldestPlay: string;
+  newestPlay: string;
+  /** 1-based rank by assist count (1 + fielders with strictly more). */
+  rank: number;
+  /** Distinct fielders tracked this season. */
+  fielderCount: number;
+}
+
+/**
+ * Aggregated profile for one fielder, or null when the id has no tracked
+ * plays (the route handler turns that into a themed 404).
+ */
+export function queryFielderProfile(db: Database, fielderId: number): FielderProfile | null {
+  const row = db
+    .prepare(
+      `SELECT fielder_id,
+         MAX(fielder_name) AS fielder_name,
+         (SELECT p2.fielder_position FROM plays p2
+          WHERE p2.fielder_id = p.fielder_id
+          GROUP BY p2.fielder_position
+          ORDER BY COUNT(*) DESC, p2.fielder_position ASC LIMIT 1) AS position,
+         (SELECT CASE p3.half_inning WHEN 'top' THEN p3.home_team ELSE p3.away_team END AS team
+          FROM plays p3 WHERE p3.fielder_id = p.fielder_id
+          GROUP BY team ORDER BY COUNT(*) DESC, team ASC LIMIT 1) AS team,
+         COUNT(*) AS total,
+         SUM(CASE WHEN tier = 'high' THEN 1 ELSE 0 END) AS high,
+         SUM(CASE WHEN tier = 'medium' THEN 1 ELSE 0 END) AS medium,
+         SUM(CASE WHEN tier = 'low' THEN 1 ELSE 0 END) AS low,
+         COALESCE(SUM(throw_velocity IS NOT NULL), 0) AS measured,
+         MAX(throw_velocity) AS max_velocity,
+         MIN(date) AS oldest_play,
+         MAX(date) AS newest_play
+       FROM plays p
+       WHERE fielder_id = $fielderId
+       GROUP BY fielder_id;`,
+    )
+    .get({ $fielderId: fielderId }) as {
+      fielder_id: number;
+      fielder_name: string;
+      position: string;
+      team: string;
+      total: number;
+      high: number;
+      medium: number;
+      low: number;
+      measured: number;
+      max_velocity: number | null;
+      oldest_play: string;
+      newest_play: string;
+    } | null;
+  if (!row) return null;
+
+  const standing = db
+    .prepare(
+      `SELECT COUNT(*) AS fielder_count,
+         COALESCE(SUM(total > $total), 0) AS ahead
+       FROM (SELECT COUNT(*) AS total FROM plays GROUP BY fielder_id);`,
+    )
+    .get({ $total: row.total }) as { fielder_count: number; ahead: number };
+
+  return {
+    fielderId: row.fielder_id,
+    fielderName: row.fielder_name,
+    position: row.position,
+    team: row.team,
+    total: row.total,
+    high: row.high,
+    medium: row.medium,
+    low: row.low,
+    measured: row.measured,
+    maxVelocity: row.max_velocity,
+    oldestPlay: row.oldest_play,
+    newestPlay: row.newest_play,
+    rank: standing.ahead + 1,
+    fielderCount: standing.fielder_count,
+  };
 }
 
 // ---------------------------------------------------------------------------
