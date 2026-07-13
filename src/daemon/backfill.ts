@@ -12,10 +12,13 @@ import type { Database } from "bun:sqlite";
 import type { Logger } from "../logger";
 import {
   queryBackfillCandidates,
+  queryVelocityBackfillCandidates,
   updatePlayVideoByPlayKey,
   updatePlayFetchStatus,
+  updatePlayThrowVelocity,
 } from "../storage/db";
 import { fetchSavantVideo } from "../detection/savant-video";
+import { resolveThrowVelocity, clearThrowCache } from "../detection/arm-velocity";
 
 /** Aggregate counters for a single backfill cycle. Returned for logging. */
 export interface BackfillStats {
@@ -105,5 +108,134 @@ export async function runBackfillCycle(
   }
 
   logger.info("backfill cycle complete", { ...stats });
+  return stats;
+}
+
+/** Aggregate counters for a single velocity backfill cycle. */
+export interface VelocityBackfillStats {
+  attempted: number;
+  matched: number;
+  stillUnmatched: number;
+  errors: number;
+}
+
+/**
+ * Runs one throw-velocity backfill pass.
+ *
+ * Savant's arm-strength leaderboard is populated by a batch that lags game
+ * end, so the pipeline's lookup at game-Final time systematically returns
+ * no_match. This cycle re-resolves velocity for recent plays whose status
+ * is not yet 'matched' — including prior 'no_match' rows — until they age
+ * out of the window, mirroring the video cycle's retry of 'no_video_found'.
+ *
+ * @param db - Open database.
+ * @param logger - Structured logger.
+ * @param options.windowDays - Inclusive age cutoff in days. Defaults to 2.
+ * @param options.isShuttingDown - Optional thunk; when it returns true the
+ *                                 cycle aborts before the next candidate.
+ */
+export async function runVelocityBackfillCycle(
+  db: Database,
+  logger: Logger,
+  options: {
+    windowDays?: number;
+    isShuttingDown?: () => boolean;
+  } = {},
+): Promise<VelocityBackfillStats> {
+  const { windowDays = 2, isShuttingDown } = options;
+
+  // The arm-velocity module caches (fielder, year) responses for the
+  // process lifetime. A long-lived daemon would otherwise keep re-checking
+  // the stale game-night snapshot, so drop the cache before each cycle.
+  //
+  // Bounded race: the cache is shared with detection-time lookups, so a
+  // concurrent pipeline run can re-populate it with a fresh game-night
+  // snapshot mid-cycle, producing a spurious no_match for this cycle.
+  // That is self-healing: non-matched rows stay in the candidate set, the
+  // next cycle re-clears, and the guarded UPDATE in
+  // updatePlayThrowVelocity means a matched row is never regressed.
+  clearThrowCache();
+
+  const candidates = queryVelocityBackfillCandidates(db, windowDays);
+
+  // Fetch failures are not cached by the arm-velocity module, so during a
+  // Savant outage every candidate for the same fielder would pay its own
+  // fetch (and 10s timeout). Remember failed (fielderId, year) keys for
+  // this cycle and short-circuit their remaining candidates with the same
+  // failure status; those rows stay retryable next cycle.
+  const failedFetches = new Map<string, string>();
+  const stats: VelocityBackfillStats = {
+    attempted: 0,
+    matched: 0,
+    stillUnmatched: 0,
+    errors: 0,
+  };
+
+  logger.info("velocity backfill cycle starting", {
+    candidates: candidates.length,
+  });
+
+  for (const candidate of candidates) {
+    if (isShuttingDown?.()) {
+      logger.info("velocity backfill cycle aborted by shutdown");
+      break;
+    }
+    stats.attempted++;
+    const year = Number(candidate.date.slice(0, 4));
+    const fetchKey = `${candidate.fielderId}:${year}`;
+
+    const priorFailure = failedFetches.get(fetchKey);
+    if (priorFailure !== undefined) {
+      updatePlayThrowVelocity(
+        db,
+        candidate.gamePk,
+        candidate.playIndex,
+        null,
+        priorFailure,
+      );
+      stats.errors++;
+      continue;
+    }
+
+    const result = await resolveThrowVelocity(
+      candidate.fielderId,
+      year,
+      candidate.playId,
+      logger,
+    );
+    if (result.status === "matched") {
+      updatePlayThrowVelocity(
+        db,
+        candidate.gamePk,
+        candidate.playIndex,
+        result.velocityMph,
+        "matched",
+      );
+      stats.matched++;
+    } else if (result.status === "no_match") {
+      updatePlayThrowVelocity(
+        db,
+        candidate.gamePk,
+        candidate.playIndex,
+        null,
+        "no_match",
+      );
+      stats.stillUnmatched++;
+    } else {
+      // Fetch error: record the status; the row stays eligible for retry.
+      failedFetches.set(fetchKey, result.status);
+      updatePlayThrowVelocity(
+        db,
+        candidate.gamePk,
+        candidate.playIndex,
+        null,
+        result.status,
+      );
+      stats.errors++;
+    }
+    await Bun.sleep(INTER_FETCH_SLEEP_MS);
+  }
+
+  logger.info("velocity backfill cycle complete", { ...stats });
   return stats;
 }

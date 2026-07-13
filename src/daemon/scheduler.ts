@@ -32,7 +32,7 @@ import {
   recordPlayMessage,
 } from "../notifications/slack-messages-store";
 import { makeBackfillNotifier } from "../notifications/backfill-notifier";
-import { runBackfillCycle } from "./backfill";
+import { runBackfillCycle, runVelocityBackfillCycle } from "./backfill";
 import { runSnapshotLoop } from "./snapshot-job";
 import type { Config } from "../config";
 import type { Logger } from "../logger";
@@ -703,6 +703,16 @@ async function runBackfillLoop(
       });
     } catch (err) {
       logger.error("backfill cycle threw", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    try {
+      await runVelocityBackfillCycle(db, logger, {
+        isShuttingDown: shouldStop,
+      });
+    } catch (err) {
+      logger.error("velocity backfill cycle threw", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
