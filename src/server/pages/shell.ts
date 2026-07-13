@@ -27,6 +27,11 @@ export interface PageShellOptions {
   body: string;
   /** Optional markup appended after the footer (tooltips, inline scripts). */
   tail?: string;
+  /**
+   * Optional extra <head> markup (og/twitter meta on the play permalink).
+   * Trusted, pre-escaped by the caller.
+   */
+  head?: string;
 }
 
 /** Renders one nav link, marking the active page with aria-current. */
@@ -42,13 +47,14 @@ function navLink(item: { page: NavPage; href: string; label: string }, active: N
 export function renderPage(options: PageShellOptions): string {
   const nav = NAV_ITEMS.map((item) => navLink(item, options.active)).join("\n      ");
   const tail = options.tail ? `\n${options.tail}` : "";
+  const head = options.head ? `\n${options.head}` : "";
 
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(options.title)}</title>
+<title>${escapeHtml(options.title)}</title>${head}
 <style>${THEME_CSS}</style>
 </head>
 <body>

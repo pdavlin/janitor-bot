@@ -36,6 +36,11 @@ import {
   queryFetchStatusCounts,
   queryRematchDecisionCounts,
   queryPipelineTotals,
+  queryThrowLanes,
+  queryCannonRankings,
+  queryMeasuredThrows,
+  queryVelocitySummary,
+  queryFielderProfile,
 } from "../storage/db";
 import type { SchedulerStatus } from "../daemon/scheduler";
 import { renderHomePage } from "./pages/home";
@@ -48,7 +53,10 @@ import {
 import { renderSeasonPage } from "./pages/season";
 import { renderAboutPage } from "./pages/about";
 import { renderOpsPage } from "./pages/ops";
-import { renderErrorPage } from "./pages/error";
+import { renderErrorPage, renderNotFoundPage } from "./pages/error";
+import { renderFielderPage } from "./pages/fielder";
+import { renderPlayPage } from "./pages/play";
+import { renderShareCardSvg } from "./pages/share-card";
 import { BASE_OPTIONS, POSITION_OPTIONS, TIER_OPTIONS } from "./filter-options";
 import { serveTeamAsset } from "./team-assets";
 import {
@@ -346,11 +354,36 @@ function parseHighlightsOffset(params: URLSearchParams): number {
 /** Matches GET /assets/teams/:abbr.png. */
 const TEAM_ASSET_ROUTE = /^\/assets\/teams\/([A-Za-z]{1,5})\.png$/;
 
-/** Matches GET /plays/:id (numeric segment after /plays/). */
+/**
+ * Matches GET /plays/:id (numeric segment after /plays/) — the JSON API.
+ * Not to be confused with the singular /play/:id HTML permalink below.
+ */
 const PLAY_BY_ID_ROUTE = /^\/plays\/(\d+)$/;
+
+/** Matches GET /fielders/:id — the HTML fielder profile page. */
+const FIELDER_PAGE_ROUTE = /^\/fielders\/(\d+)$/;
+
+/**
+ * Matches GET /play/:id — the HTML play permalink page. Singular /play is
+ * deliberate: plural /plays/:id stays the JSON API endpoint.
+ */
+const PLAY_PAGE_ROUTE = /^\/play\/(\d+)$/;
+
+/** Matches GET /play/:id/card.svg — the standalone share-card image. */
+const PLAY_CARD_SVG_ROUTE = /^\/play\/(\d+)\/card\.svg$/;
 
 /** Themed 500 document, built once (DB-free) and reused for HTML errors. */
 const ERROR_PAGE_HTML = renderErrorPage();
+
+/** Themed 404 document for the HTML page routes, built once (DB-free). */
+const NOT_FOUND_PAGE_HTML = renderNotFoundPage();
+
+/**
+ * Cache lifetime for the share-card SVG. Shorter than the team assets'
+ * immutable week because a card's content can still change after first
+ * serve (velocity backfill, re-match tier swaps).
+ */
+const CARD_CACHE_CONTROL = "public, max-age=86400";
 
 // ---------------------------------------------------------------------------
 // Route handlers
@@ -440,8 +473,73 @@ function handleSeasonPage(ctx: HandlerContext): Response {
       mix: queryDirectRelayByBase(ctx.db),
       leaders: queryArmLeaderboard(ctx.db),
       teamsBurned: queryTeamsMostBurned(ctx.db),
+      lanes: queryThrowLanes(ctx.db),
+      cannons: queryCannonRankings(ctx.db),
+      throws: queryMeasuredThrows(ctx.db),
+      velocity: queryVelocitySummary(ctx.db),
     }),
   );
+}
+
+/**
+ * GET /fielders/:id
+ *
+ * Fielder profile page. Unknown or playless ids return the themed 404.
+ */
+function handleFielderPage(ctx: HandlerContext, idSegment: string): Response {
+  const id = parseNonNegativeInt(idSegment);
+  const profile = id === null ? null : queryFielderProfile(ctx.db, id);
+  if (id === null || !profile) {
+    return htmlResponse(NOT_FOUND_PAGE_HTML, 404);
+  }
+  return htmlResponse(
+    renderFielderPage({
+      profile,
+      lanes: queryThrowLanes(ctx.db, id),
+      velocities: queryMeasuredThrows(ctx.db, id).map((t) => t.velocity),
+      league: queryVelocitySummary(ctx.db),
+      teamsBurned: queryTeamsMostBurned(ctx.db, 10, id),
+      recentPlays: queryPlays(ctx.db, { fielderId: id, limit: 3 }),
+    }),
+  );
+}
+
+/**
+ * GET /play/:id
+ *
+ * Play permalink page (HTML; the JSON API stays at plural /plays/:id).
+ * Unknown ids return the themed 404.
+ */
+function handlePlayPage(ctx: HandlerContext, idSegment: string): Response {
+  const id = parseNonNegativeInt(idSegment);
+  const play = id === null ? null : queryPlayById(ctx.db, id);
+  if (!play) {
+    return htmlResponse(NOT_FOUND_PAGE_HTML, 404);
+  }
+  return htmlResponse(renderPlayPage(play));
+}
+
+/**
+ * GET /play/:id/card.svg
+ *
+ * The standalone 1200×630 share-card image referenced by the permalink's
+ * og:image. Served with CORS and a one-day cache (the card can change
+ * when a velocity backfill or re-match lands).
+ */
+function handlePlayCardSvg(ctx: HandlerContext, idSegment: string): Response {
+  const id = parseNonNegativeInt(idSegment);
+  const play = id === null ? null : queryPlayById(ctx.db, id);
+  if (!play) {
+    return new Response("Not found", { status: 404, headers: { ...CORS_HEADERS } });
+  }
+  return new Response(renderShareCardSvg(play), {
+    status: 200,
+    headers: {
+      ...CORS_HEADERS,
+      "Content-Type": "image/svg+xml; charset=utf-8",
+      "Cache-Control": CARD_CACHE_CONTROL,
+    },
+  });
 }
 
 /**
@@ -618,6 +716,8 @@ type GetRoute =
     }
   | {
       pattern: RegExp;
+      /** True for HTML pages: an unhandled error returns the themed 500. */
+      html?: true;
       handle: (
         ctx: HandlerContext,
         params: URLSearchParams,
@@ -638,6 +738,20 @@ const GET_ROUTES: readonly GetRoute[] = [
   { path: "/season", html: true, handle: handleSeasonPage },
   { path: "/about", html: true, handle: () => htmlResponse(renderAboutPage()) },
   { path: "/ops", html: true, handle: handleOpsPage },
+  {
+    pattern: FIELDER_PAGE_ROUTE,
+    html: true,
+    handle: (ctx, _params, match) => handleFielderPage(ctx, match[1]),
+  },
+  {
+    pattern: PLAY_CARD_SVG_ROUTE,
+    handle: (ctx, _params, match) => handlePlayCardSvg(ctx, match[1]),
+  },
+  {
+    pattern: PLAY_PAGE_ROUTE,
+    html: true,
+    handle: (ctx, _params, match) => handlePlayPage(ctx, match[1]),
+  },
   {
     pattern: TEAM_ASSET_ROUTE,
     handle: (_ctx, _params, match) => serveTeamAsset(match[1], CORS_HEADERS),
@@ -672,6 +786,19 @@ const HTML_ROUTE_PATHS = new Set<string>(
     "path" in route && route.html ? [route.path] : [],
   ),
 );
+
+/** Patterns of the HTML page routes (fielder profiles, play permalinks). */
+const HTML_ROUTE_PATTERNS: readonly RegExp[] = GET_ROUTES.flatMap((route) =>
+  "pattern" in route && route.html ? [route.pattern] : [],
+);
+
+/** True when the pathname belongs to an HTML page route (exact or pattern). */
+function isHtmlRoute(pathname: string): boolean {
+  return (
+    HTML_ROUTE_PATHS.has(pathname) ||
+    HTML_ROUTE_PATTERNS.some((pattern) => pattern.test(pathname))
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Server factory
@@ -780,7 +907,7 @@ export function startServer(deps: ServerDeps): HttpServer {
         });
         // HTML routes get a themed 500 page; JSON routes keep the JSON error.
         response =
-          req.method === "GET" && HTML_ROUTE_PATHS.has(pathname)
+          req.method === "GET" && isHtmlRoute(pathname)
             ? htmlResponse(ERROR_PAGE_HTML, 500)
             : jsonResponse({ error: "Internal server error" }, 500);
         logRequest(logger, req.method, pathname, response.status, start);

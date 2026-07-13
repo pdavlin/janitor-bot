@@ -10,18 +10,26 @@
 import type {
   BaseCount,
   BaseThrowMix,
+  CannonLeader,
   FielderLeader,
+  MeasuredThrow,
   TeamBurnCount,
+  ThrowLane,
   TierCount,
+  VelocitySummary,
   WeeklyCount,
 } from "../../storage/db";
 import { renderPage } from "./shell";
-import { dateSpan, emptyNote, escapeHtml, formatShortDate, share } from "./components";
+import { dateSpan, emptyNote, escapeHtml, formatShortDate, mph, share } from "./components";
 import {
+  baseColor,
+  renderBeeswarm,
   renderChartLegend,
   renderDataTable,
   renderHBarChart,
   renderMixChart,
+  renderPositionStrips,
+  renderThrowMap,
   renderWeeklyChart,
   TOOLTIP_HTML,
   TOOLTIP_SCRIPT,
@@ -39,14 +47,14 @@ export interface SeasonPageData {
   mix: BaseThrowMix[];
   leaders: FielderLeader[];
   teamsBurned: TeamBurnCount[];
-}
-
-/** Fixed categorical slot per target base (design brief, never cycled). */
-function baseColor(base: string): string {
-  if (base === "Home") return "var(--chart-1)";
-  if (base === "2B") return "var(--chart-2)";
-  if (base === "3B") return "var(--chart-3)";
-  return "var(--chart-4)";
+  /** Assist counts per (position, base) lane, for the throw map. */
+  lanes: ThrowLane[];
+  /** Top arms by peak measured velocity. */
+  cannons: CannonLeader[];
+  /** Every measured throw, velocity ascending. */
+  throws: MeasuredThrow[];
+  /** Velocity coverage and range across the season. */
+  velocity: VelocitySummary;
 }
 
 /** Season subhead, e.g. "378 outfield assists tracked · Mar 10 – Jun 23, 2026". */
@@ -176,6 +184,146 @@ function mixSection(data: SeasonPageData): string {
   );
 }
 
+/** Fixed base order for the throw-map/beeswarm swatch legends. */
+const LEGEND_BASE_ORDER = ["Home", "2B", "3B", "1B"] as const;
+
+/**
+ * Thin-swatch base legend for the velocity charts, listing only the bases
+ * present in the data, in fixed Home/2B/3B/1B order with lowercase labels.
+ */
+function baseSwatchLegend(present: ReadonlySet<string>): string {
+  const items = LEGEND_BASE_ORDER.filter((base) => present.has(base)).map(
+    (base) => ({ label: base.toLowerCase(), color: baseColor(base) }),
+  );
+  return renderChartLegend(items, "map-legend");
+}
+
+/** New section 1: the season throw map with its position×base table twin. */
+function throwMapSection(data: SeasonPageData): string {
+  const legend = "throw map";
+  if (data.lanes.length === 0) return section(legend, null);
+
+  const aria = `Bird's-eye diamond: ${data.totalPlays} outfield-assist throws, arcs colored by target base.`;
+  return section(
+    legend,
+    `<p class="chart-note">Every tracked assist as an arc from its outfield zone to the
+      base where the runner was retired. Denser lanes = more traffic.
+      All ${data.totalPlays} plays.</p>
+    ${renderThrowMap(data.lanes, aria)}
+    ${baseSwatchLegend(new Set(data.lanes.map((lane) => lane.base)))}
+    ${renderDataTable(
+      ["position", "target base", "throws"],
+      data.lanes.map((lane) => [lane.position, lane.base, String(lane.count)]),
+    )}`,
+  );
+}
+
+/** Bar scale floor for the cannon rankings, so ~90-103 differences read. */
+const CANNON_FLOOR_MPH = 88;
+
+/** New section 2: top 10 arms by single hardest measured throw. */
+function cannonSection(data: SeasonPageData): string {
+  const legend = "cannon rankings";
+  if (data.cannons.length === 0 || data.velocity.max == null) {
+    return section(legend, null);
+  }
+
+  const topMph = data.velocity.max;
+  const items = data.cannons
+    .map((cannon, i) => {
+      const pct = Math.max(
+        4,
+        ((cannon.maxVelocity - CANNON_FLOOR_MPH) / (topMph - CANNON_FLOOR_MPH)) * 100,
+      );
+      return `<li>
+        <span class="rank">${i + 1}</span>
+        <span class="who"><a class="name" href="/fielders/${cannon.fielderId}">${escapeHtml(cannon.fielderName)}</a><span class="pos">${escapeHtml(cannon.position)}</span></span>
+        <span class="cannon-metric">
+          <div class="cannon-bar-track"><div class="cannon-bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
+          <span class="cannon-num">${mph(cannon.maxVelocity)}<span class="cannon-unit">mph</span></span>
+        </span>
+        <span class="cannon-sub">avg ${mph(cannon.avgVelocity)} &middot; ${cannon.throwCount} throw${cannon.throwCount === 1 ? "" : "s"}</span>
+      </li>`;
+    })
+    .join("\n      ");
+
+  const coveragePct =
+    data.totalPlays === 0 ? 0 : Math.round((data.velocity.measured / data.totalPlays) * 100);
+
+  return section(
+    legend,
+    `<p class="chart-note">Top ${data.cannons.length} arms by single hardest tracked throw.
+      Hero number is peak mph; bar scaled from ${CANNON_FLOOR_MPH} mph.</p>
+    <ol class="cannon">
+      ${items}
+    </ol>
+    <p class="chart-note" style="margin-top:.6rem">Coverage: ${data.velocity.measured} of ${data.totalPlays} plays
+      carry Statcast velocity (${coveragePct}%). Fielders with few tracked throws can
+      rank high on a single laser.</p>`,
+  );
+}
+
+/** Velocity histogram buckets for the beeswarm's data-table twin. */
+const VELOCITY_BUCKETS: ReadonlyArray<{ label: string; min: number; max: number }> = [
+  { label: "under 70", min: -Infinity, max: 70 },
+  { label: "70–79", min: 70, max: 80 },
+  { label: "80–89", min: 80, max: 90 },
+  { label: "90–94", min: 90, max: 95 },
+  { label: "95+", min: 95, max: Infinity },
+];
+
+/** New section 3: the velocity-spread beeswarm with its bucket table twin. */
+function velocitySpreadSection(data: SeasonPageData): string {
+  const legend = "velocity spread";
+  const velos = data.throws.map((t) => t.velocity);
+  if (velos.length === 0 || data.velocity.min == null || data.velocity.max == null) {
+    return section(legend, null);
+  }
+
+  const median = velos[Math.floor(velos.length / 2)]!;
+  const aria = `Velocity spread: ${velos.length} measured throws on an mph axis, colored by target base.`;
+  return section(
+    legend,
+    `<p class="chart-note">One dot per measured throw, placed on the mph axis, colored by
+      target base. Min ${mph(data.velocity.min)} &middot; median ${mph(median)} &middot; max ${mph(data.velocity.max)} mph.</p>
+    ${renderBeeswarm(data.throws, aria)}
+    ${baseSwatchLegend(new Set(data.throws.map((t) => t.base)))}
+    ${renderDataTable(
+      ["velocity bucket", "throws"],
+      VELOCITY_BUCKETS.map((bucket) => [
+        bucket.label,
+        String(velos.filter((v) => v >= bucket.min && v < bucket.max).length),
+      ]),
+    )}`,
+  );
+}
+
+/** Positions in strip order, matching renderPositionStrips. */
+const STRIP_POSITIONS = ["LF", "CF", "RF"] as const;
+
+/** New section 4: per-position velocity strips with a summary table twin. */
+function armByPositionSection(data: SeasonPageData): string {
+  const legend = "arm by position";
+  if (data.throws.length === 0) return section(legend, null);
+
+  const rows = STRIP_POSITIONS.flatMap((position) => {
+    const velos = data.throws
+      .filter((t) => t.position === position)
+      .map((t) => t.velocity);
+    if (velos.length === 0) return [];
+    const median = velos[Math.floor(velos.length / 2)]!;
+    const max = velos[velos.length - 1]!;
+    return [[position, String(velos.length), mph(median), mph(max)]];
+  });
+
+  return section(
+    legend,
+    `<p class="chart-note">Same mph axis, split by where the fielder stood.</p>
+    ${renderPositionStrips(data.throws, "Throw velocity by fielding position, three mini dot strips sharing one mph axis.")}
+    ${renderDataTable(["position", "throws", "median mph", "max mph"], rows)}`,
+  );
+}
+
 /** Arm leaderboard: rank, name, position, count bar, tier-mix dot counts. */
 function leaderboardSection(data: SeasonPageData): string {
   const legend = "arm leaderboard";
@@ -200,7 +348,7 @@ function leaderboardSection(data: SeasonPageData): string {
       return `<li>
         <span class="rank">${i + 1}</span>
         <div class="who">
-          <span class="name">${escapeHtml(leader.fielderName)}</span>
+          <a class="name" href="/fielders/${leader.fielderId}">${escapeHtml(leader.fielderName)}</a>
           <span class="pos">${escapeHtml(leader.position)}</span>
         </div>
         <div class="metric">
@@ -269,6 +417,14 @@ export function renderSeasonPage(data: SeasonPageData): string {
   ${baseSection(data)}
 
   ${mixSection(data)}
+
+  ${throwMapSection(data)}
+
+  ${cannonSection(data)}
+
+  ${velocitySpreadSection(data)}
+
+  ${armByPositionSection(data)}
 
   ${leaderboardSection(data)}
 

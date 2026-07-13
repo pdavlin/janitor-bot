@@ -364,8 +364,16 @@ describe("website pages (seeded DB)", () => {
       expect(body).toContain("direct vs relay");
       expect(body).toContain("arm leaderboard");
       expect(body).toContain("teams most burned");
+      // batch-3 sections: the throw map renders (all plays have lanes) but
+      // the velocity sections stay empty because no seed has a velocity.
+      expect(body).toContain("throw map");
+      expect(body).toContain("cannon rankings");
+      expect(body).toContain("velocity spread");
+      expect(body).toContain("arm by position");
       expect(countOf(body, '<svg class="chart"')).toBe(4);
-      expect(countOf(body, "data table")).toBe(4);
+      expect(body).toContain('<svg class="chart throwmap"');
+      // 4 original chart twins + the throw map's position×base twin
+      expect(countOf(body, "data table")).toBe(5);
       // subhead with total and range
       expect(body).toContain("4 outfield assists tracked");
       // leaderboard includes the top fielder (Andy Pages has 1 assist)
@@ -545,7 +553,9 @@ describe("website pages (empty DB)", () => {
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain("0 outfield assists tracked");
-    expect(body.split("no data yet.").length - 1).toBe(6);
+    // 6 original sections + throw map, cannon rankings, velocity spread,
+    // and arm by position from batch 3
+    expect(body.split("no data yet.").length - 1).toBe(10);
     expect(body).not.toContain('<svg class="chart"');
   });
 

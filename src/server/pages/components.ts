@@ -93,6 +93,25 @@ export function emptyNote(text: string): string {
   return `<p class="empty">${escapeHtml(text)}</p>`;
 }
 
+/**
+ * Velocity display: one decimal, Statcast convention (e.g. "101.2").
+ * Shared by the play card chip, the season velocity sections, the fielder
+ * page, and the share card.
+ */
+export function mph(velocity: number): string {
+  return velocity.toFixed(1);
+}
+
+/**
+ * The measured-velocity chip rendered next to the tier badge, or an empty
+ * string when the play has no measured velocity (absent state renders
+ * nothing extra — never a fake zero).
+ */
+export function mphChip(throwVelocity: number | null): string {
+  if (throwVelocity == null || throwVelocity <= 0) return "";
+  return `<span class="mph"><span class="n">${mph(throwVelocity)}</span><span class="u">mph</span></span>`;
+}
+
 /** Formats the half inning for the matchup context line ("top 7" / "bot 3"). */
 function halfInningShort(halfInning: string, inning: number): string {
   const half = halfInning === "top" ? "top" : "bot";
@@ -126,8 +145,9 @@ function isSafeHttpUrl(value: string): boolean {
 }
 
 /**
- * Renders one play as a fieldset card (used by the highlights gallery and
- * the home page's recent-highlights list).
+ * Renders one play as a fieldset card (used by the highlights gallery, the
+ * home page's recent-highlights list, the fielder profile, and the play
+ * permalink). The date legend links to the play's permalink page.
  */
 export function playCard(play: StoredPlay): string {
   const isDirect = isDirectThrow(play.creditChain);
@@ -144,13 +164,16 @@ export function playCard(play: StoredPlay): string {
     ? `\n      <span class="overturned" title="out came via a replay-review overturn">overturned</span>`
     : "";
 
+  const chip = mphChip(play.throwVelocity);
+  const chipTag = chip === "" ? "" : `\n      ${chip}`;
+
   const video =
     play.videoUrl && isSafeHttpUrl(play.videoUrl)
       ? `<a class="watch" href="${escapeHtml(play.videoUrl)}">&#9654; watch</a>`
       : `<span class="no-video">no video</span>`;
 
   return `<fieldset class="card">
-  <legend>${escapeHtml(play.date)}</legend>
+  <legend><a class="plink" href="/play/${play.id}">${escapeHtml(play.date)}</a></legend>
   <div class="matchup">
     ${teamBadge(play.awayTeam)}<span class="at">@</span>${teamBadge(play.homeTeam)}
     <span class="score">${play.awayScore}&ndash;${play.homeScore}</span>
@@ -163,7 +186,7 @@ export function playCard(play: StoredPlay): string {
   </div>
   <div class="card-foot">
     <div class="tags">
-      ${tierBadge(play.tier)}${overturnedTag}
+      ${tierBadge(play.tier)}${overturnedTag}${chipTag}
     </div>
     ${video}
   </div>

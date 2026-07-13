@@ -85,4 +85,25 @@ describe("playCard", () => {
     expect(html).toContain('<span class="no-video">no video</span>');
     expect(html).not.toContain('class="watch"');
   });
+
+  test("links the date legend to the play permalink", () => {
+    const html = playCard(makeStoredPlay({ id: 268 }));
+    expect(html).toContain('<a class="plink" href="/play/268">2026-06-23</a>');
+  });
+
+  test("renders the mph chip next to the tier badge when velocity is present", () => {
+    const html = playCard(makeStoredPlay({ throwVelocity: 102.7 }));
+    expect(html).toContain('<span class="mph"><span class="n">102.7</span><span class="u">mph</span></span>');
+  });
+
+  test("renders nothing extra when velocity is absent", () => {
+    const html = playCard(makeStoredPlay({ throwVelocity: null }));
+    expect(html).not.toContain('class="mph"');
+    expect(html).not.toContain("no velo");
+  });
+
+  test("never renders a non-positive velocity as a chip", () => {
+    const html = playCard(makeStoredPlay({ throwVelocity: 0 }));
+    expect(html).not.toContain('class="mph"');
+  });
 });

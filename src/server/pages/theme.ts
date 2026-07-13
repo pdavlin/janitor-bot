@@ -398,6 +398,117 @@ thead th { color: var(--color-text-muted); font-weight: bold; }
 .legend-inline span { display: inline-flex; align-items: center; gap: .35rem; }
 .legend-inline .dot { width: 8px; height: 8px; }
 
+/* ---- mph chip (play cards, fielder page) ---- */
+.mph { flex-shrink: 0; display: inline-flex; align-items: baseline; gap: .25em;
+  font-size: .75rem; letter-spacing: .3px; padding: .1em .5em; border-radius: 2px;
+  border: 1px solid color-mix(in oklch, var(--base_08) 45%, transparent);
+  background: color-mix(in oklch, var(--base_08) 10%, var(--color-bg));
+  font-variant-numeric: tabular-nums; }
+.mph .n { color: var(--color-text-accent); font-weight: 700; }
+.mph .u { color: var(--color-text-muted); font-size: .6875rem; }
+
+/* ---- play-card permalink (the date legend links to /play/:id) ---- */
+.card legend .plink { text-decoration: none; }
+.card legend .plink:hover { text-decoration: underline;
+  text-decoration-color: var(--accent-color); text-underline-offset: 2px; }
+
+/* ---- throw map + velocity charts (/season cannon update) ---- */
+svg.throwmap { max-width: 400px; margin: .3rem auto 0; }
+.legend.map-legend { justify-content: center; }
+.legend.map-legend .swatch { height: 3px; border-radius: 2px; }
+.bee { transition: opacity .1s ease-out; }
+.bee:hover { opacity: 1; }
+
+/* ---- cannon rankings (/season) ---- */
+.cannon { list-style: none; margin: .4rem 0 0; padding: 0; display: flex;
+  flex-direction: column; }
+.cannon li { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto;
+  grid-template-areas: "rank who metric" ". sub sub"; align-items: center;
+  gap: .1rem .7rem; padding: .5rem 0; border-bottom: 1px solid var(--grid); }
+.cannon li:last-child { border-bottom: 0; }
+.cannon .rank { grid-area: rank; color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums; text-align: right; font-size: .8125rem; }
+.cannon .who { grid-area: who; display: flex; align-items: baseline; gap: .5rem;
+  min-width: 0; flex-wrap: wrap; }
+.cannon .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cannon .pos { color: var(--color-text-muted); font-size: .72rem; }
+.cannon .cannon-metric { grid-area: metric; display: flex; align-items: center;
+  gap: .6rem; justify-self: end; }
+.cannon-bar-track { width: clamp(48px, 12vw, 120px); height: 6px;
+  background: var(--grid); border-radius: 0 3px 3px 0; overflow: hidden; }
+.cannon-bar-fill { height: 100%; background: var(--accent-color);
+  border-radius: 0 3px 3px 0; }
+.cannon-num { font-size: 1.5rem; line-height: 1; font-weight: 700;
+  font-variant-numeric: tabular-nums; letter-spacing: -.5px;
+  color: var(--color-text); min-width: 4.4rem; text-align: right; }
+.cannon-unit { font-size: .7rem; font-weight: 400; color: var(--color-text-muted);
+  margin-left: .25rem; letter-spacing: 0; }
+.cannon .cannon-sub { grid-area: sub; color: var(--color-text-muted);
+  font-size: .72rem; font-variant-numeric: tabular-nums; }
+
+/* ---- fielder profile (/fielders/:id) ---- */
+.profile-head { margin-bottom: var(--space_m); }
+.profile-head .title { margin-bottom: var(--space_2xs); text-transform: none;
+  letter-spacing: -.5px; }
+.profile-meta { display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: .4em .75em; font-size: .9375rem; }
+.profile-meta .pos-tag { border-radius: 2px; padding: .05em .45em;
+  font-size: .75rem; font-weight: bold; letter-spacing: .5px;
+  color: var(--color-text-accent);
+  border: 1px solid color-mix(in oklch, var(--accent-color) 45%, transparent); }
+.profile-meta .era { color: var(--color-text-muted); font-size: .8125rem; }
+.stat-num .unit { font-size: 1rem; font-weight: 400; color: var(--color-text-muted); }
+.panel-grid { display: grid; gap: var(--space_s);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  align-items: start; }
+.panel-grid fieldset { margin: 0; }
+.viz { width: 100%; height: auto; display: block; overflow: visible;
+  font-family: var(--font-mono); }
+.viz text { fill: var(--color-text-muted); }
+.viz text.t-ink { fill: var(--color-text); }
+.viz-cap { color: var(--color-text-muted); font-size: .75rem; margin: .5rem 0 0; }
+.map-key { display: flex; flex-wrap: wrap; gap: .35em .9em; font-size: .75rem;
+  margin-top: .5rem; color: var(--color-text-muted); }
+.map-key .k { display: inline-flex; align-items: center; gap: .4em;
+  white-space: nowrap; }
+.map-key .swatch { width: .85em; height: .28em; border-radius: 1px;
+  display: inline-block; }
+.map-key .n { color: var(--color-text); font-variant-numeric: tabular-nums; }
+.tier-rows { display: flex; flex-direction: column; gap: .5em; margin: 0; }
+.tier-rows .row { display: flex; align-items: center; gap: .5em;
+  font-size: .875rem; }
+.tier-rows .lbl { min-width: 4.5em; color: var(--color-text-muted); }
+.tier-rows .count { font-variant-numeric: tabular-nums; font-weight: 700; }
+.tier-rows .bar { flex: 1; height: .55em; min-width: 0;
+  background: color-mix(in oklch, var(--color-text) 8%, transparent);
+  border-radius: 1px; overflow: hidden; }
+.tier-rows .bar span { display: block; height: 100%; }
+.tier-rows .high .bar span { background: var(--tier-high); }
+.tier-rows .medium .bar span { background: var(--tier-medium); }
+.tier-rows .low .bar span { background: var(--tier-low); }
+.burned { display: flex; flex-wrap: wrap; gap: .5em .6em; margin: 0; padding: 0;
+  list-style: none; }
+.burned li { display: inline-flex; align-items: center; gap: .4em;
+  font-size: .8125rem; }
+.burned .x { color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+
+/* ---- play permalink (/play/:id) ---- */
+.share-frame { border: 1px solid var(--grid);
+  background: color-mix(in oklch, var(--color-text) 3%, transparent);
+  padding: .75rem; overflow-x: auto; }
+.share-frame svg { display: block; width: 100%; height: auto; max-width: 640px;
+  margin-inline: auto; }
+.share-actions { display: flex; flex-wrap: wrap; gap: .6em var(--space_s);
+  align-items: center; margin-top: .6rem; font-size: .8125rem;
+  color: var(--color-text-muted); }
+.share-actions .copy { border: 1px solid var(--base_03); border-radius: 2px;
+  background: transparent; color: var(--color-text);
+  font-family: var(--font-mono); font-size: .8125rem; cursor: pointer;
+  padding: .3em .7em; }
+.share-actions .copy:hover { border-color: var(--accent-color);
+  color: var(--color-text-accent); }
+.share-actions code { font-size: .75rem; word-break: break-all; }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
