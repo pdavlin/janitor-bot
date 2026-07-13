@@ -58,14 +58,22 @@ function subhead(data: SeasonPageData): string {
 
 const EMPTY_NOTE = emptyNote("no data yet.");
 
+/**
+ * Wraps a section body in the page's standard fieldset + legend markup —
+ * the same section-wrapper pattern as ops.ts's section(), with /season's
+ * fieldset chrome. Pass null as the body for the shared empty state.
+ */
+function section(legend: string, body: string | null): string {
+  return `<fieldset>
+    <legend>${legend}</legend>
+    ${body ?? EMPTY_NOTE}
+  </fieldset>`;
+}
+
 /** Chart 1: plays per ISO week. */
 function weeklySection(data: SeasonPageData): string {
-  if (data.weekly.length === 0) {
-    return `<fieldset>
-    <legend>plays per week</legend>
-    ${EMPTY_NOTE}
-  </fieldset>`;
-  }
+  const legend = "plays per week";
+  if (data.weekly.length === 0) return section(legend, null);
 
   const rows: ChartRow[] = data.weekly.map((w) => ({
     label: formatShortDate(w.weekStart),
@@ -76,22 +84,18 @@ function weeklySection(data: SeasonPageData): string {
   const peak = rows.reduce((best, r) => (r.value > best.value ? r : best), rows[0]!);
   const aria = `Bar chart of plays tracked per week, ranging from ${Math.min(...values)} to ${Math.max(...values)}.`;
 
-  return `<fieldset>
-    <legend>plays per week</legend>
-    <p class="chart-note">Weekly count of tracked assists. Peak week begins ${escapeHtml(peak.label)}.</p>
+  return section(
+    legend,
+    `<p class="chart-note">Weekly count of tracked assists. Peak week begins ${escapeHtml(peak.label)}.</p>
     ${renderWeeklyChart(rows, aria)}
-    ${renderDataTable(["week of", "plays"], rows.map((r) => [r.label, String(r.value)]))}
-  </fieldset>`;
+    ${renderDataTable(["week of", "plays"], rows.map((r) => [r.label, String(r.value)]))}`,
+  );
 }
 
 /** Chart 2: tier distribution. */
 function tierSection(data: SeasonPageData): string {
-  if (data.totalPlays === 0) {
-    return `<fieldset>
-    <legend>tier distribution</legend>
-    ${EMPTY_NOTE}
-  </fieldset>`;
-  }
+  const legend = "tier distribution";
+  if (data.totalPlays === 0) return section(legend, null);
 
   const rows: ChartRow[] = data.tiers.map((t) => ({
     label: t.tier,
@@ -102,25 +106,21 @@ function tierSection(data: SeasonPageData): string {
     .map((t) => `${t.tier} ${t.count}`)
     .join(", ")}.`;
 
-  return `<fieldset>
-    <legend>tier distribution</legend>
-    <p class="chart-note">Assists by scored tier. Ramp runs high &rarr; low off the accent.</p>
+  return section(
+    legend,
+    `<p class="chart-note">Assists by scored tier. Ramp runs high &rarr; low off the accent.</p>
     ${renderHBarChart(rows, "plays", aria)}
     ${renderDataTable(
       ["tier", "plays", "share"],
       data.tiers.map((t) => [t.tier, String(t.count), share(t.count, data.totalPlays, 1)]),
-    )}
-  </fieldset>`;
+    )}`,
+  );
 }
 
 /** Chart 3: target base breakdown. */
 function baseSection(data: SeasonPageData): string {
-  if (data.bases.length === 0) {
-    return `<fieldset>
-    <legend>target base breakdown</legend>
-    ${EMPTY_NOTE}
-  </fieldset>`;
-  }
+  const legend = "target base breakdown";
+  if (data.bases.length === 0) return section(legend, null);
 
   const rows: ChartRow[] = data.bases.map((b) => ({
     label: b.base,
@@ -131,9 +131,9 @@ function baseSection(data: SeasonPageData): string {
     .map((b) => `${b.base} ${b.count}`)
     .join(", ")}.`;
 
-  return `<fieldset>
-    <legend>target base breakdown</legend>
-    <p class="chart-note">Which base the runner was cut down at. The colors below key
+  return section(
+    legend,
+    `<p class="chart-note">Which base the runner was cut down at. The colors below key
       the base for this chart only; the direct-vs-relay chart reuses the same
       swatches for its own two series and carries its own legend.</p>
     ${renderHBarChart(rows, "target", aria)}
@@ -141,18 +141,14 @@ function baseSection(data: SeasonPageData): string {
     ${renderDataTable(
       ["target base", "plays", "share"],
       data.bases.map((b) => [b.base, String(b.count), share(b.count, data.totalPlays, 1)]),
-    )}
-  </fieldset>`;
+    )}`,
+  );
 }
 
 /** Chart 4: direct vs relay per target base. */
 function mixSection(data: SeasonPageData): string {
-  if (data.mix.length === 0) {
-    return `<fieldset>
-    <legend>direct vs relay</legend>
-    ${EMPTY_NOTE}
-  </fieldset>`;
-  }
+  const legend = "direct vs relay";
+  if (data.mix.length === 0) return section(legend, null);
 
   const rows = data.mix.map((m) => ({
     label: m.base,
@@ -160,9 +156,9 @@ function mixSection(data: SeasonPageData): string {
     relay: m.relay,
   }));
 
-  return `<fieldset>
-    <legend>direct vs relay</legend>
-    <p class="chart-note">Share of each base's assists made on a single throw (direct)
+  return section(
+    legend,
+    `<p class="chart-note">Share of each base's assists made on a single throw (direct)
       versus a relay chain. Bars are 100% of that base's plays.</p>
     ${renderMixChart(rows, "100 percent stacked bars of direct versus relay throws per target base.")}
     ${renderChartLegend([
@@ -176,18 +172,14 @@ function mixSection(data: SeasonPageData): string {
         const relayPct = total === 0 ? "0%" : `${Math.round((m.relay / total) * 100)}%`;
         return [m.base, String(m.direct), String(m.relay), relayPct];
       }),
-    )}
-  </fieldset>`;
+    )}`,
+  );
 }
 
 /** Arm leaderboard: rank, name, position, count bar, tier-mix dot counts. */
 function leaderboardSection(data: SeasonPageData): string {
-  if (data.leaders.length === 0) {
-    return `<fieldset>
-    <legend>arm leaderboard</legend>
-    ${EMPTY_NOTE}
-  </fieldset>`;
-  }
+  const legend = "arm leaderboard";
+  if (data.leaders.length === 0) return section(legend, null);
 
   const maxTotal = data.leaders[0]!.total;
   const list = data.leaders
@@ -220,9 +212,9 @@ function leaderboardSection(data: SeasonPageData): string {
     })
     .join("\n      ");
 
-  return `<fieldset>
-    <legend>arm leaderboard</legend>
-    <p class="chart-note">Most tracked assists by fielder. Bar shows count; dots show
+  return section(
+    legend,
+    `<p class="chart-note">Most tracked assists by fielder. Bar shows count; dots show
       tier mix (high / medium / low).</p>
     <ol class="lb">
       ${list}
@@ -231,18 +223,14 @@ function leaderboardSection(data: SeasonPageData): string {
       <span><i class="dot" style="background:var(--tier-high)"></i>high</span>
       <span><i class="dot" style="background:var(--tier-medium)"></i>medium</span>
       <span><i class="dot" style="background:var(--tier-low)"></i>low</span>
-    </div>
-  </fieldset>`;
+    </div>`,
+  );
 }
 
 /** Teams most burned: runner's team, thin bar, count. */
 function teamsSection(data: SeasonPageData): string {
-  if (data.teamsBurned.length === 0) {
-    return `<fieldset>
-    <legend>teams most burned</legend>
-    ${EMPTY_NOTE}
-  </fieldset>`;
-  }
+  const legend = "teams most burned";
+  if (data.teamsBurned.length === 0) return section(legend, null);
 
   const maxCount = data.teamsBurned[0]!.count;
   const list = data.teamsBurned
@@ -256,14 +244,14 @@ function teamsSection(data: SeasonPageData): string {
     })
     .join("\n      ");
 
-  return `<fieldset>
-    <legend>teams most burned</legend>
-    <p class="chart-note">Runners cut down, counted by the runner's team. Runner team
+  return section(
+    legend,
+    `<p class="chart-note">Runners cut down, counted by the runner's team. Runner team
       is the batting side: away in the top half, home in the bottom.</p>
     <ol class="teams">
       ${list}
-    </ol>
-  </fieldset>`;
+    </ol>`,
+  );
 }
 
 /** Renders the full season page HTML document. */
