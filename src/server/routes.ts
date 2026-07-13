@@ -49,6 +49,7 @@ import { renderSeasonPage } from "./pages/season";
 import { renderAboutPage } from "./pages/about";
 import { renderOpsPage } from "./pages/ops";
 import { renderErrorPage } from "./pages/error";
+import { BASE_OPTIONS, POSITION_OPTIONS, TIER_OPTIONS } from "./filter-options";
 import { serveTeamAsset } from "./team-assets";
 import {
   verifySlackSignature,
@@ -137,9 +138,9 @@ function todayLocal(): string {
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 /** MLB team abbreviation shape (2-3 uppercase letters, e.g. LAD, KC). */
 const TEAM_ABBR_PATTERN = /^[A-Z]{2,3}$/;
-const VALID_TIERS = new Set<string>(["high", "medium", "low"]);
-const VALID_POSITIONS = new Set<string>(["LF", "CF", "RF"]);
-const VALID_BASES = new Set<string>(["2B", "3B", "Home"]);
+const VALID_TIERS = new Set<string>(TIER_OPTIONS);
+const VALID_POSITIONS = new Set<string>(POSITION_OPTIONS);
+const VALID_BASES = new Set<string>(BASE_OPTIONS);
 
 /**
  * Parses a string as a non-negative integer.

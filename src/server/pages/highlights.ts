@@ -8,6 +8,7 @@
 
 import type { StoredPlay, Tier } from "../../types/play";
 import { renderPage } from "./shell";
+import { BASE_OPTIONS, POSITION_OPTIONS, TIER_OPTIONS } from "../filter-options";
 import { escapeHtml, playCard } from "./components";
 
 /** Number of play cards per gallery page. */
@@ -54,7 +55,7 @@ function filterSelect(
   name: string,
   label: string,
   allLabel: string,
-  values: string[],
+  values: readonly string[],
   current: string | undefined,
 ): string {
   const options = [
@@ -139,10 +140,10 @@ export function renderHighlightsPage(data: HighlightsPageData): string {
   <fieldset class="filters">
     <legend>filters</legend>
     <form method="get" action="/highlights" class="cluster">
-      ${filterSelect("tier", "tier", "all tiers", ["high", "medium", "low"], data.filters.tier)}
+      ${filterSelect("tier", "tier", "all tiers", TIER_OPTIONS, data.filters.tier)}
       ${filterSelect("team", "team", "all teams", data.teams, data.filters.team)}
-      ${filterSelect("position", "position", "all positions", ["LF", "CF", "RF"], data.filters.position)}
-      ${filterSelect("base", "base", "all bases", ["2B", "3B", "Home"], data.filters.base)}
+      ${filterSelect("position", "position", "all positions", POSITION_OPTIONS, data.filters.position)}
+      ${filterSelect("base", "base", "all bases", BASE_OPTIONS, data.filters.base)}
       <button class="filter-apply" type="submit">apply</button>
     </form>
   </fieldset>
