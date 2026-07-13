@@ -1325,6 +1325,99 @@ export function updatePlayFetchStatus(
 }
 
 /**
+ * One row per unique play that still needs a throw-velocity lookup.
+ * Returned by queryVelocityBackfillCandidates; runner-row duplicates
+ * are collapsed the same way as BackfillCandidate.
+ */
+export interface VelocityBackfillCandidate {
+  gamePk: number;
+  playIndex: number;
+  playId: string;
+  fielderId: number;
+  date: string;
+}
+
+/**
+ * Returns plays eligible for a throw-velocity backfill attempt.
+ *
+ * A row is eligible when:
+ *   - throw_velocity is NULL (nothing resolved yet)
+ *   - play_id is NOT NULL (we can key into the arm-strength data)
+ *   - date falls within the configurable window (default last 2 days)
+ *   - throw_velocity_status is not 'matched'
+ *
+ * 'no_match' is retryable: Savant's arm-strength leaderboard is populated
+ * by a batch that lags game end by several hours, so the pipeline's lookup
+ * at game-Final time always misses the play even though it appears by the
+ * next day. The windowDays cutoff is the only stop condition, mirroring
+ * the video backfill's treatment of 'no_video_found'.
+ *
+ * @param db - An open Database instance.
+ * @param windowDays - Inclusive age in days. Defaults to 2.
+ */
+export function queryVelocityBackfillCandidates(
+  db: Database,
+  windowDays = 2,
+): VelocityBackfillCandidate[] {
+  // windowDays is interpolated for the same reason as in
+  // queryBackfillCandidates: bun:sqlite can't bind into date modifiers.
+  const sql = `
+    SELECT DISTINCT game_pk, play_index, play_id, fielder_id, date
+    FROM plays
+    WHERE throw_velocity IS NULL
+      AND play_id IS NOT NULL
+      AND date >= date('now', '-${windowDays} days')
+      AND (throw_velocity_status IS NULL OR throw_velocity_status != 'matched')
+    ORDER BY date DESC, game_pk, play_index;
+  `;
+
+  const rows = db.prepare(sql).all() as {
+    game_pk: number;
+    play_index: number;
+    play_id: string;
+    fielder_id: number;
+    date: string;
+  }[];
+
+  return rows.map((r) => ({
+    gamePk: r.game_pk,
+    playIndex: r.play_index,
+    playId: r.play_id,
+    fielderId: r.fielder_id,
+    date: r.date,
+  }));
+}
+
+/**
+ * Writes throw_velocity and throw_velocity_status for all rows with the
+ * given (game_pk, play_index). Pass velocityMph=null for non-matched
+ * outcomes so the column stays NULL while the status records the attempt.
+ *
+ * @returns Number of rows updated.
+ */
+export function updatePlayThrowVelocity(
+  db: Database,
+  gamePk: number,
+  playIndex: number,
+  velocityMph: number | null,
+  status: string,
+): number {
+  const stmt = db.prepare(`
+    UPDATE plays
+    SET throw_velocity = $velocityMph,
+        throw_velocity_status = $status
+    WHERE game_pk = $gamePk AND play_index = $playIndex;
+  `);
+  const result = stmt.run({
+    $velocityMph: velocityMph,
+    $status: status,
+    $gamePk: gamePk,
+    $playIndex: playIndex,
+  });
+  return Number(result.changes);
+}
+
+/**
  * Populates play_id for legacy rows (game_pk, play_index) that don't have
  * one yet. Idempotent: rows where play_id is already set are not modified.
  *
