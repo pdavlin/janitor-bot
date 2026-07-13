@@ -8,12 +8,17 @@
  *      catches typos / stale slugs.
  *   2. Every PNG in the folder is reachable from at least one abbreviation —
  *      catches uploaded emoji that the formatter would never use.
+ *
+ * The website's team-asset map (server/team-assets.ts) derives from the
+ * same map plus web-only alternate abbreviations, so the drift checks
+ * cover it here too.
  */
 
 import { test, expect, describe } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { TEAM_ABBREV_TO_EMOJI, teamEmoji } from "../team-emoji";
+import { TEAM_ASSET_FILES } from "../../server/team-assets";
 
 const EMOJI_DIR = join(import.meta.dir, "..", "..", "..", "mlb_teams_emoji");
 
@@ -56,5 +61,35 @@ describe("emoji directory ↔ map coverage", () => {
   test("every emoji file is reachable from at least one abbreviation", () => {
     const orphans = slugsOnDisk.filter((slug) => !slugsInMap.has(slug));
     expect(orphans).toEqual([]);
+  });
+});
+
+describe("web team-asset map ↔ emoji map coverage", () => {
+  test("every web map value matches a file in mlb_teams_emoji/", () => {
+    const onDisk = new Set(listEmojiSlugs());
+    const missing = Object.values(TEAM_ASSET_FILES).filter(
+      (slug) => !onDisk.has(slug),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  test("web map contains every emoji-map entry unchanged", () => {
+    for (const [abbrev, slug] of Object.entries(TEAM_ABBREV_TO_EMOJI)) {
+      expect(TEAM_ASSET_FILES[abbrev]).toBe(slug);
+    }
+  });
+
+  test("web-only alternates resolve to the same file as their canonical abbreviation", () => {
+    const alternates: Array<[string, string]> = [
+      ["AZ", "ARI"],
+      ["KCR", "KC"],
+      ["SDP", "SD"],
+      ["SFG", "SF"],
+      ["TBR", "TB"],
+      ["WSN", "WSH"],
+    ];
+    for (const [alternate, canonical] of alternates) {
+      expect(TEAM_ASSET_FILES[alternate]).toBe(TEAM_ABBREV_TO_EMOJI[canonical]!);
+    }
   });
 });

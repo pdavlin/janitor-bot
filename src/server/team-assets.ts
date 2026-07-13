@@ -7,50 +7,32 @@
  * back to a text badge.
  */
 
+import { TEAM_ABBREV_TO_EMOJI } from "../notifications/team-emoji";
+
+/**
+ * Web-only alternate abbreviations (AZ/ARI, KC/KCR, ...) so historical
+ * rows keep resolving if the Stats API abbreviation shifts. These are on
+ * top of the canonical map below; the Slack formatter never sees them.
+ */
+const TEAM_ASSET_ALTERNATES: Record<string, string> = {
+  AZ: "arizona-diamondbacks",
+  KCR: "kansas-city-royals",
+  SDP: "san-diego-padres",
+  SFG: "san-francisco-giants",
+  TBR: "tampa-bay-rays",
+  WSN: "washington-nationals",
+};
+
 /**
  * DB team abbreviation -> filename (without .png) in mlb_teams_emoji/.
- * Includes common alternates (AZ/ARI, KC/KCR, ...) so historical rows keep
- * resolving if the Stats API abbreviation shifts.
+ * Derived from the Slack emoji map (the slugs there are the PNG filenames
+ * by contract; see team-emoji.ts) plus the web-only alternates above, so
+ * the two maps can't drift. Exported for the drift test in
+ * src/notifications/__tests__/team-emoji.test.ts.
  */
-const TEAM_ASSET_FILES: Record<string, string> = {
-  ARI: "arizona-diamondbacks",
-  AZ: "arizona-diamondbacks",
-  ATH: "athletics",
-  OAK: "athletics",
-  ATL: "atlanta-braves",
-  BAL: "baltimore-orioles",
-  BOS: "boston-red-sox",
-  CHC: "chicago-cubs",
-  CWS: "chicago-white-sox",
-  CHW: "chicago-white-sox",
-  CIN: "cincinnati-reds",
-  CLE: "cleveland-guardians",
-  COL: "colorado-rockies",
-  DET: "detroit-tigers",
-  HOU: "houston-astros",
-  KC: "kansas-city-royals",
-  KCR: "kansas-city-royals",
-  LAA: "los-angeles-angels",
-  LAD: "los-angeles-dodgers",
-  MIA: "miami-marlins",
-  MIL: "milwaukee-brewers",
-  MIN: "minnesota-twins",
-  NYM: "new-york-mets",
-  NYY: "new-york-yankees",
-  PHI: "philadelphia-phillies",
-  PIT: "pittsburgh-pirates",
-  SD: "san-diego-padres",
-  SDP: "san-diego-padres",
-  SEA: "seattle-mariners",
-  SF: "san-francisco-giants",
-  SFG: "san-francisco-giants",
-  STL: "st-louis-cardinals",
-  TB: "tampa-bay-rays",
-  TBR: "tampa-bay-rays",
-  TEX: "texas-rangers",
-  TOR: "toronto-blue-jays",
-  WSH: "washington-nationals",
-  WSN: "washington-nationals",
+export const TEAM_ASSET_FILES: Record<string, string> = {
+  ...TEAM_ABBREV_TO_EMOJI,
+  ...TEAM_ASSET_ALTERNATES,
 };
 
 /** Repo-relative asset directory, resolved from this module's location. */
