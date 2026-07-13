@@ -32,6 +32,18 @@ export interface HighlightsFilters {
   base?: string;
 }
 
+/**
+ * The gallery's filter keys in form/query-string order — the single
+ * enumeration driving the filter form, the pager's query strings, and the
+ * empty-state copy.
+ */
+const FILTER_KEYS: readonly (keyof HighlightsFilters)[] = [
+  "tier",
+  "team",
+  "position",
+  "base",
+];
+
 /** Data the highlights page renders from; assembled by the route handler. */
 export interface HighlightsPageData {
   /** Plays for the current page, already filtered and paginated. */
@@ -70,13 +82,49 @@ function filterSelect(
       </label>`;
 }
 
+/**
+ * Option values per filter key. Tier/position/base come from the shared
+ * filter domains; team's come from the DB at render time.
+ */
+function filterOptionValues(
+  key: keyof HighlightsFilters,
+  teams: string[],
+): readonly string[] {
+  switch (key) {
+    case "tier":
+      return TIER_OPTIONS;
+    case "team":
+      return teams;
+    case "position":
+      return POSITION_OPTIONS;
+    case "base":
+      return BASE_OPTIONS;
+  }
+}
+
+/**
+ * The four filter selects, driven by FILTER_KEYS: each select's label is
+ * its key and its all-option is "all <key>s"; only the values vary.
+ */
+function filterSelects(data: HighlightsPageData): string {
+  return FILTER_KEYS.map((key) =>
+    filterSelect(
+      key,
+      key,
+      `all ${key}s`,
+      filterOptionValues(key, data.teams),
+      data.filters[key],
+    ),
+  ).join("\n      ");
+}
+
 /** Serializes the active filters (and an optional offset) to a query string. */
 function queryString(filters: HighlightsFilters, offset: number): string {
   const params = new URLSearchParams();
-  if (filters.tier) params.set("tier", filters.tier);
-  if (filters.team) params.set("team", filters.team);
-  if (filters.position) params.set("position", filters.position);
-  if (filters.base) params.set("base", filters.base);
+  for (const key of FILTER_KEYS) {
+    const value = filters[key];
+    if (value) params.set(key, value);
+  }
   if (offset > 0) params.set("offset", String(offset));
   const qs = params.toString();
   return qs === "" ? "/highlights" : `/highlights?${qs}`;
@@ -109,11 +157,7 @@ function pager(data: HighlightsPageData): string {
  *   - first page, no filters: the DB genuinely has nothing yet.
  */
 function emptyState(data: HighlightsPageData): string {
-  const filtered =
-    data.filters.tier !== undefined ||
-    data.filters.team !== undefined ||
-    data.filters.position !== undefined ||
-    data.filters.base !== undefined;
+  const filtered = FILTER_KEYS.some((key) => data.filters[key] !== undefined);
   let message: string;
   if (data.offset > 0) {
     message = "nothing this far back.";
@@ -140,10 +184,7 @@ export function renderHighlightsPage(data: HighlightsPageData): string {
   <fieldset class="filters">
     <legend>filters</legend>
     <form method="get" action="/highlights" class="cluster">
-      ${filterSelect("tier", "tier", "all tiers", TIER_OPTIONS, data.filters.tier)}
-      ${filterSelect("team", "team", "all teams", data.teams, data.filters.team)}
-      ${filterSelect("position", "position", "all positions", POSITION_OPTIONS, data.filters.position)}
-      ${filterSelect("base", "base", "all bases", BASE_OPTIONS, data.filters.base)}
+      ${filterSelects(data)}
       <button class="filter-apply" type="submit">apply</button>
     </form>
   </fieldset>
