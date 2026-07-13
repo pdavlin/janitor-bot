@@ -14,6 +14,7 @@
 import { Database } from "bun:sqlite";
 import type { Tier, FetchStatus, DetectedPlay, StoredPlay } from "../types/play";
 import type { PlayEventDecision } from "../notifications/play-rematch-events-store";
+import { isDirectThrow } from "../detection/ranking";
 
 export type { DetectedPlay, StoredPlay } from "../types/play";
 
@@ -839,22 +840,37 @@ export function queryTargetBaseCounts(db: Database): BaseCount[] {
 
 /**
  * Direct vs relay throw counts per target base, ordered by total plays
- * descending. A chain is direct when it contains exactly one " -> "
- * separator (two fielders); anything longer is a relay.
+ * descending (ties broken by base ascending). Direct-vs-relay is decided
+ * per row in TS by the shared rule helper (ranking.ts isDirectThrow), so
+ * this aggregate can never drift from the tier scorer or the play card.
  */
 export function queryDirectRelayByBase(db: Database): BaseThrowMix[] {
   const rows = db
-    .prepare(
-      `SELECT target_base,
-         SUM(CASE WHEN (length(credit_chain) - length(replace(credit_chain, ' -> ', ''))) / 4 = 1
-             THEN 1 ELSE 0 END) AS direct,
-         SUM(CASE WHEN (length(credit_chain) - length(replace(credit_chain, ' -> ', ''))) / 4 = 1
-             THEN 0 ELSE 1 END) AS relay
-       FROM plays
-       GROUP BY target_base ORDER BY COUNT(*) DESC, target_base ASC;`,
-    )
-    .all() as { target_base: string; direct: number; relay: number }[];
-  return rows.map((r) => ({ base: r.target_base, direct: r.direct, relay: r.relay }));
+    .prepare("SELECT target_base, credit_chain FROM plays;")
+    .all() as { target_base: string; credit_chain: string }[];
+
+  const byBase = new Map<string, { direct: number; relay: number }>();
+  for (const row of rows) {
+    let mix = byBase.get(row.target_base);
+    if (!mix) {
+      mix = { direct: 0, relay: 0 };
+      byBase.set(row.target_base, mix);
+    }
+    if (isDirectThrow(row.credit_chain)) {
+      mix.direct += 1;
+    } else {
+      mix.relay += 1;
+    }
+  }
+
+  return [...byBase.entries()]
+    .map(([base, mix]) => ({ base, direct: mix.direct, relay: mix.relay }))
+    .sort((a, b) => {
+      const totalDiff = b.direct + b.relay - (a.direct + a.relay);
+      if (totalDiff !== 0) return totalDiff;
+      // Codepoint comparison matches SQLite's BINARY collation ASC.
+      return a.base < b.base ? -1 : a.base > b.base ? 1 : 0;
+    });
 }
 
 /**
