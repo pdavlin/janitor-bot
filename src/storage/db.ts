@@ -336,7 +336,10 @@ ON CONFLICT(game_pk, play_index, runner_id) DO UPDATE SET
   play_id        = COALESCE(excluded.play_id, plays.play_id),
   fetch_status   = excluded.fetch_status,
   throw_velocity = COALESCE(excluded.throw_velocity, plays.throw_velocity),
-  throw_velocity_status = COALESCE(excluded.throw_velocity_status, plays.throw_velocity_status);
+  throw_velocity_status = CASE
+    WHEN plays.throw_velocity_status = 'matched' THEN plays.throw_velocity_status
+    ELSE COALESCE(excluded.throw_velocity_status, plays.throw_velocity_status)
+  END;
 `;
 
 // ---------------------------------------------------------------------------
@@ -1393,6 +1396,11 @@ export function queryVelocityBackfillCandidates(
  * given (game_pk, play_index). Pass velocityMph=null for non-matched
  * outcomes so the column stays NULL while the status records the attempt.
  *
+ * Only rows whose throw_velocity is still NULL are touched: a row that
+ * became matched between the candidate snapshot and this write (e.g. a
+ * startup re-scan running concurrently with a backfill cycle) is never
+ * downgraded or nulled by a late error-path write.
+ *
  * @returns Number of rows updated.
  */
 export function updatePlayThrowVelocity(
@@ -1406,7 +1414,8 @@ export function updatePlayThrowVelocity(
     UPDATE plays
     SET throw_velocity = $velocityMph,
         throw_velocity_status = $status
-    WHERE game_pk = $gamePk AND play_index = $playIndex;
+    WHERE game_pk = $gamePk AND play_index = $playIndex
+      AND throw_velocity IS NULL;
   `);
   const result = stmt.run({
     $velocityMph: velocityMph,

@@ -147,9 +147,23 @@ export async function runVelocityBackfillCycle(
   // The arm-velocity module caches (fielder, year) responses for the
   // process lifetime. A long-lived daemon would otherwise keep re-checking
   // the stale game-night snapshot, so drop the cache before each cycle.
+  //
+  // Bounded race: the cache is shared with detection-time lookups, so a
+  // concurrent pipeline run can re-populate it with a fresh game-night
+  // snapshot mid-cycle, producing a spurious no_match for this cycle.
+  // That is self-healing: non-matched rows stay in the candidate set, the
+  // next cycle re-clears, and the guarded UPDATE in
+  // updatePlayThrowVelocity means a matched row is never regressed.
   clearThrowCache();
 
   const candidates = queryVelocityBackfillCandidates(db, windowDays);
+
+  // Fetch failures are not cached by the arm-velocity module, so during a
+  // Savant outage every candidate for the same fielder would pay its own
+  // fetch (and 10s timeout). Remember failed (fielderId, year) keys for
+  // this cycle and short-circuit their remaining candidates with the same
+  // failure status; those rows stay retryable next cycle.
+  const failedFetches = new Map<string, string>();
   const stats: VelocityBackfillStats = {
     attempted: 0,
     matched: 0,
@@ -168,6 +182,21 @@ export async function runVelocityBackfillCycle(
     }
     stats.attempted++;
     const year = Number(candidate.date.slice(0, 4));
+    const fetchKey = `${candidate.fielderId}:${year}`;
+
+    const priorFailure = failedFetches.get(fetchKey);
+    if (priorFailure !== undefined) {
+      updatePlayThrowVelocity(
+        db,
+        candidate.gamePk,
+        candidate.playIndex,
+        null,
+        priorFailure,
+      );
+      stats.errors++;
+      continue;
+    }
+
     const result = await resolveThrowVelocity(
       candidate.fielderId,
       year,
@@ -194,6 +223,7 @@ export async function runVelocityBackfillCycle(
       stats.stillUnmatched++;
     } else {
       // Fetch error: record the status; the row stays eligible for retry.
+      failedFetches.set(fetchKey, result.status);
       updatePlayThrowVelocity(
         db,
         candidate.gamePk,

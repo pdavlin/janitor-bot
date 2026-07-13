@@ -340,6 +340,49 @@ describe("runVelocityBackfillCycle", () => {
     expect(row.throwVelocityStatus).toBe("matched");
   });
 
+  test("one failed fetch per (fielder, year) short-circuits the rest of the cycle", async () => {
+    // Fetch failures are not cached by arm-velocity, so without dedup a
+    // Savant outage would cost one fetch (and timeout) per candidate.
+    insertPlays(db, [
+      makeMockPlay({ runnerId: 1, playIndex: 13, playId: SODERSTROM_PLAY_ID }),
+      makeMockPlay({
+        runnerId: 2,
+        playIndex: 20,
+        playId: "068b5651-de77-3525-84b8-edef1a3bc6aa",
+      }),
+    ]);
+
+    let calls = 0;
+    installFetchMock(() => {
+      calls++;
+      return Promise.resolve(new Response("server error", { status: 503 }));
+    });
+
+    const stats = await runVelocityBackfillCycle(db, makeSilentLogger());
+
+    expect(calls).toBe(1);
+    expect(stats.attempted).toBe(2);
+    expect(stats.errors).toBe(2);
+
+    for (const r of queryPlays(db, { limit: 10 })) {
+      expect(r.throwVelocity).toBeNull();
+      expect(r.throwVelocityStatus).toBe("non_200");
+    }
+
+    // Rows stay retryable: a healthy next cycle resolves both.
+    installFetchMock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(ARM_STRENGTH_FIXTURE), { status: 200 }),
+      ),
+    );
+
+    const retry = await runVelocityBackfillCycle(db, makeSilentLogger());
+    expect(retry.matched).toBe(2);
+    for (const r of queryPlays(db, { limit: 10 })) {
+      expect(r.throwVelocityStatus).toBe("matched");
+    }
+  });
+
   test("isShuttingDown thunk aborts the loop before subsequent candidates", async () => {
     insertPlays(db, [
       makeMockPlay({ runnerId: 1, playIndex: 1, fielderId: 100001, playId: "p1" }),

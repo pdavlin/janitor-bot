@@ -21,6 +21,7 @@ import {
   queryBackfillCandidates,
   updatePlayVideoByPlayKey,
   updatePlayFetchStatus,
+  updatePlayThrowVelocity,
   updatePlayId,
   migratePlayRematchEventsCheck,
   queryArmLeaderboard,
@@ -155,6 +156,44 @@ describe("throw velocity persistence", () => {
     const stored = queryPlays(db)[0]!;
     expect(stored.throwVelocity).toBeNull();
     expect(stored.throwVelocityStatus).toBe("no_match");
+    db.close();
+  });
+
+  test("updatePlayThrowVelocity is a no-op on a row that is already matched", () => {
+    const db = createDatabase(":memory:");
+    insertPlay(
+      db,
+      makeMockPlay({ throwVelocity: 92.1, throwVelocityStatus: "matched" }),
+    );
+
+    // A late error-path write (e.g. from a cycle whose candidate snapshot
+    // predates the match) must not clobber the resolved row.
+    const changed = updatePlayThrowVelocity(db, 717401, 42, null, "non_200");
+
+    expect(changed).toBe(0);
+    const stored = queryPlays(db)[0]!;
+    expect(stored.throwVelocity).toBe(92.1);
+    expect(stored.throwVelocityStatus).toBe("matched");
+    db.close();
+  });
+
+  test("upsert never downgrades a matched status on re-scan", () => {
+    const db = createDatabase(":memory:");
+    insertPlay(
+      db,
+      makeMockPlay({ throwVelocity: 92.1, throwVelocityStatus: "matched" }),
+    );
+
+    // Re-scan of the same play: detection-time lookup gets no_match again
+    // (Savant's leaderboard lags game end). The matched row must survive.
+    insertPlay(
+      db,
+      makeMockPlay({ throwVelocity: null, throwVelocityStatus: "no_match" }),
+    );
+
+    const stored = queryPlays(db)[0]!;
+    expect(stored.throwVelocity).toBe(92.1);
+    expect(stored.throwVelocityStatus).toBe("matched");
     db.close();
   });
 });
