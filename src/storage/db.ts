@@ -700,6 +700,23 @@ export function queryPlayById(db: Database, id: number): StoredPlay | null {
 }
 
 /**
+ * Play counts grouped by tier, most common first, optionally scoped by a
+ * WHERE clause. The one tier aggregate shared by queryPlayStats (date
+ * scoped) and queryTierCounts (unscoped, re-ordered and zero-filled).
+ */
+function queryTotalByTier(
+  db: Database,
+  whereClause = "",
+  params: Record<string, string> = {},
+): { tier: Tier; count: number }[] {
+  return db
+    .prepare(
+      `SELECT tier, COUNT(*) as count FROM plays ${whereClause} GROUP BY tier ORDER BY count DESC;`,
+    )
+    .all(params) as { tier: Tier; count: number }[];
+}
+
+/**
  * Aggregated statistics about stored plays, optionally filtered by date range.
  */
 export function queryPlayStats(db: Database, from?: string, to?: string): PlayStats {
@@ -718,9 +735,7 @@ export function queryPlayStats(db: Database, from?: string, to?: string): PlaySt
   const whereClause =
     conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  const totalByTier = db
-    .prepare(`SELECT tier, COUNT(*) as count FROM plays ${whereClause} GROUP BY tier ORDER BY count DESC;`)
-    .all(params) as { tier: string; count: number }[];
+  const totalByTier = queryTotalByTier(db, whereClause, params);
 
   const topFielders = db
     .prepare(
@@ -813,13 +828,11 @@ export function queryWeeklyCounts(db: Database): WeeklyCount[] {
 
 /**
  * Play counts per tier in fixed high → medium → low order.
- * Tiers with no plays are included with a count of 0.
+ * Tiers with no plays are included with a count of 0. A zero-fill/order
+ * wrapper over the tier aggregate shared with queryPlayStats.
  */
 export function queryTierCounts(db: Database): TierCount[] {
-  const rows = db
-    .prepare("SELECT tier, COUNT(*) AS count FROM plays GROUP BY tier;")
-    .all() as { tier: Tier; count: number }[];
-  const byTier = new Map(rows.map((r) => [r.tier, r.count]));
+  const byTier = new Map(queryTotalByTier(db).map((r) => [r.tier, r.count]));
   const order: Tier[] = ["high", "medium", "low"];
   return order.map((tier) => ({ tier, count: byTier.get(tier) ?? 0 }));
 }
