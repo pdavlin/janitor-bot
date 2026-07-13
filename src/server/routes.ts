@@ -346,42 +346,11 @@ function parseHighlightsOffset(params: URLSearchParams): number {
 /** Matches GET /assets/teams/:abbr.png. */
 const TEAM_ASSET_ROUTE = /^\/assets\/teams\/([A-Za-z]{1,5})\.png$/;
 
-/** HTML page routes; an error on these returns a themed 500, not JSON. */
-const HTML_ROUTES = new Set<string>([
-  "/",
-  "/highlights",
-  "/season",
-  "/about",
-  "/ops",
-]);
+/** Matches GET /plays/:id (numeric segment after /plays/). */
+const PLAY_BY_ID_ROUTE = /^\/plays\/(\d+)$/;
 
 /** Themed 500 document, built once (DB-free) and reused for HTML errors. */
 const ERROR_PAGE_HTML = renderErrorPage();
-
-/** Known route patterns for 405 detection. */
-const KNOWN_ROUTES: Array<RegExp | string> = [
-  "/",
-  "/highlights",
-  "/season",
-  "/about",
-  "/ops",
-  "/plays",
-  "/plays/today",
-  /^\/plays\/\d+$/,
-  "/stats",
-  "/health",
-  TEAM_ASSET_ROUTE,
-];
-
-/**
- * Returns true when the pathname matches one of the API's known routes.
- * Used to distinguish 405 (wrong method on valid route) from 404.
- */
-function matchesKnownRoute(pathname: string): boolean {
-  return KNOWN_ROUTES.some((route) =>
-    typeof route === "string" ? route === pathname : route.test(pathname),
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Route handlers
@@ -628,6 +597,83 @@ async function handleSlackEvents(
 }
 
 // ---------------------------------------------------------------------------
+// Route table
+// ---------------------------------------------------------------------------
+
+/**
+ * One GET route: an exact path or a pattern, its handler, and (for HTML
+ * pages) the flag that routes unhandled errors to the themed 500 page.
+ * Pattern handlers receive the pathname match so they can read capture
+ * groups.
+ */
+type GetRoute =
+  | {
+      path: string;
+      /** True for HTML pages: an unhandled error returns the themed 500. */
+      html?: true;
+      handle: (
+        ctx: HandlerContext,
+        params: URLSearchParams,
+      ) => Response | Promise<Response>;
+    }
+  | {
+      pattern: RegExp;
+      handle: (
+        ctx: HandlerContext,
+        params: URLSearchParams,
+        match: RegExpMatchArray,
+      ) => Response | Promise<Response>;
+    };
+
+/**
+ * The GET route table, in match order (exact paths first, then patterns,
+ * mirroring the precedence documented on startServer). One table drives
+ * dispatch, the 405-vs-404 distinction for non-GET methods, and the
+ * HTML-vs-JSON error shape, so a route can't be known to one and not
+ * another.
+ */
+const GET_ROUTES: readonly GetRoute[] = [
+  { path: "/", html: true, handle: handleHomePage },
+  { path: "/highlights", html: true, handle: handleHighlightsPage },
+  { path: "/season", html: true, handle: handleSeasonPage },
+  { path: "/about", html: true, handle: () => htmlResponse(renderAboutPage()) },
+  { path: "/ops", html: true, handle: handleOpsPage },
+  {
+    pattern: TEAM_ASSET_ROUTE,
+    handle: (_ctx, _params, match) => serveTeamAsset(match[1], CORS_HEADERS),
+  },
+  {
+    path: "/plays/today",
+    handle: (ctx: HandlerContext, params: URLSearchParams) =>
+      handlePlays(ctx, params, todayLocal()),
+  },
+  {
+    pattern: PLAY_BY_ID_ROUTE,
+    handle: (ctx, _params, match) => handlePlayById(ctx, match[1]),
+  },
+  { path: "/plays", handle: handlePlays },
+  { path: "/stats", handle: handleStats },
+  { path: "/health", handle: handleHealth },
+];
+
+/**
+ * Returns true when the pathname matches one of the API's known routes.
+ * Used to distinguish 405 (wrong method on valid route) from 404.
+ */
+function matchesKnownRoute(pathname: string): boolean {
+  return GET_ROUTES.some((route) =>
+    "path" in route ? route.path === pathname : route.pattern.test(pathname),
+  );
+}
+
+/** HTML page paths; an unhandled error on these returns a themed 500, not JSON. */
+const HTML_ROUTE_PATHS = new Set<string>(
+  GET_ROUTES.flatMap((route) =>
+    "path" in route && route.html ? [route.path] : [],
+  ),
+);
+
+// ---------------------------------------------------------------------------
 // Server factory
 // ---------------------------------------------------------------------------
 
@@ -636,15 +682,11 @@ async function handleSlackEvents(
  *
  * Routes are matched in order:
  * 1. OPTIONS on any path (CORS preflight)
- * 2. GET / (home page)
- * 3. GET /highlights, /season, /about, /ops (HTML pages)
- * 4. GET /assets/teams/:abbr.png (team logos)
- * 5. GET /plays/today
- * 6. GET /plays/:id (numeric id)
- * 7. GET /plays
- * 8. GET /stats
- * 9. GET /health
- * 10. Everything else -> 404
+ * 2. POST /slack/events
+ * 3. GET routes in GET_ROUTES table order (HTML pages, team assets,
+ *    then the JSON API)
+ * 4. Everything else -> 404 (or 405 when a non-GET method hits a
+ *    known GET route)
  *
  * @param deps - Injected dependencies (database, logger, port, scheduler status getter)
  * @returns The running Bun Server instance
@@ -711,81 +753,16 @@ export function startServer(deps: ServerDeps): HttpServer {
           return response;
         }
 
-        // GET /
-        if (pathname === "/") {
-          response = handleHomePage(ctx);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /highlights
-        if (pathname === "/highlights") {
-          response = handleHighlightsPage(ctx, url.searchParams);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /season
-        if (pathname === "/season") {
-          response = handleSeasonPage(ctx);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /about
-        if (pathname === "/about") {
-          response = htmlResponse(renderAboutPage());
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /ops
-        if (pathname === "/ops") {
-          response = handleOpsPage(ctx);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /assets/teams/:abbr.png
-        const teamAssetMatch = pathname.match(TEAM_ASSET_ROUTE);
-        if (teamAssetMatch) {
-          response = await serveTeamAsset(teamAssetMatch[1], CORS_HEADERS);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /plays/today
-        if (pathname === "/plays/today") {
-          response = handlePlays(ctx, url.searchParams, todayLocal());
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /plays/:id (numeric segment after /plays/)
-        const playByIdMatch = pathname.match(/^\/plays\/(\d+)$/);
-        if (playByIdMatch) {
-          response = handlePlayById(ctx, playByIdMatch[1]);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /plays
-        if (pathname === "/plays") {
-          response = handlePlays(ctx, url.searchParams);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /stats
-        if (pathname === "/stats") {
-          response = handleStats(ctx, url.searchParams);
-          logRequest(logger, req.method, pathname, response.status, start);
-          return response;
-        }
-
-        // GET /health
-        if (pathname === "/health") {
-          response = handleHealth(ctx);
+        // GET routes, in table order
+        for (const route of GET_ROUTES) {
+          if ("path" in route) {
+            if (route.path !== pathname) continue;
+            response = await route.handle(ctx, url.searchParams);
+          } else {
+            const match = pathname.match(route.pattern);
+            if (!match) continue;
+            response = await route.handle(ctx, url.searchParams, match);
+          }
           logRequest(logger, req.method, pathname, response.status, start);
           return response;
         }
@@ -803,7 +780,7 @@ export function startServer(deps: ServerDeps): HttpServer {
         });
         // HTML routes get a themed 500 page; JSON routes keep the JSON error.
         response =
-          req.method === "GET" && HTML_ROUTES.has(pathname)
+          req.method === "GET" && HTML_ROUTE_PATHS.has(pathname)
             ? htmlResponse(ERROR_PAGE_HTML, 500)
             : jsonResponse({ error: "Internal server error" }, 500);
         logRequest(logger, req.method, pathname, response.status, start);
