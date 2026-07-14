@@ -14,7 +14,7 @@
 import type { Database } from "bun:sqlite";
 import type { Logger } from "../logger";
 import type { BackfillSuccessEvent } from "../daemon/backfill";
-import { queryPlays, queryVelocityTopShare } from "../storage/db";
+import { queryPlays, makeVelocityTopShareLookup } from "../storage/db";
 import {
   lookupPlayMessage,
   markPlayMessageUpdated,
@@ -103,7 +103,7 @@ async function applyUpdate(
     config,
     ref.channel,
     ref.ts,
-    buildPlayReplyMessage(play, (velocityMph) => queryVelocityTopShare(db, velocityMph)),
+    buildPlayReplyMessage(play, makeVelocityTopShareLookup(db, logger)),
     logger,
   );
   if (!updated) {

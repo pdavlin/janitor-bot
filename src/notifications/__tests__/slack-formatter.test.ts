@@ -81,11 +81,27 @@ describe("throw velocity annotation", () => {
     expect(JSON.stringify(result.blocks)).toContain("Throw: 103 mph (Statcast) 🔫 CANNON");
   });
 
-  test("does not append the CANNON tag below 98 mph", () => {
-    const result = buildGameMessage([makeMockPlay({ throwVelocity: 97.9 })]);
+  test("tags a throw that ROUNDS to 98 so the rule matches the rendered number", () => {
+    const result = buildGameMessage([makeMockPlay({ throwVelocity: 97.7 })]);
+    expect(JSON.stringify(result.blocks)).toContain(
+      "Throw: 98 mph (Statcast) 🔫 CANNON",
+    );
+  });
+
+  test("does not append the CANNON tag when the rendered number is below 98", () => {
+    const result = buildGameMessage([makeMockPlay({ throwVelocity: 97.4 })]);
     const json = JSON.stringify(result.blocks);
-    expect(json).toContain("Throw: 98 mph (Statcast)");
+    expect(json).toContain("Throw: 97 mph (Statcast)");
     expect(json).not.toContain("CANNON");
+  });
+
+  test("a throwing percentile lookup fails soft to the plain velocity line", () => {
+    const result = buildGameMessage([makeMockPlay({ throwVelocity: 96.4 })], () => {
+      throw new Error("SQLITE_BUSY");
+    });
+    const json = JSON.stringify(result.blocks);
+    expect(json).toContain("Throw: 96 mph (Statcast)");
+    expect(json).not.toContain("this season");
   });
 
   test("appends the top-X% flex when the lookup puts the throw in the top 10%", () => {

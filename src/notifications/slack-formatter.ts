@@ -105,6 +105,12 @@ export interface SlackPayload {
  *   - in the season's top 10% of measured throws (when a lookup is
  *     provided): append " (top X% this season)", X >= 1
  *
+ * The CANNON rule compares the rounded value so the tag always matches
+ * the rendered number (97.7 renders as "98 mph" and earns the tag).
+ * The percentile lookup fails soft: the flex is decoration, so a lookup
+ * error (e.g. SQLITE_BUSY mid-posting-loop) must degrade to the plain
+ * velocity line rather than abort the remaining posts.
+ *
  * @param velocityMph - Positive measured throw velocity.
  * @param velocityTopShare - Optional season top-share lookup.
  */
@@ -112,11 +118,19 @@ function buildVelocityLine(
   velocityMph: number,
   velocityTopShare?: VelocityTopShareLookup,
 ): string {
-  let line = `Throw: ${Math.round(velocityMph)} mph (Statcast)`;
-  if (velocityMph >= CANNON_THRESHOLD_MPH) {
+  const displayMph = Math.round(velocityMph);
+  let line = `Throw: ${displayMph} mph (Statcast)`;
+  if (displayMph >= CANNON_THRESHOLD_MPH) {
     line += " 🔫 CANNON";
   }
-  const topShare = velocityTopShare?.(velocityMph) ?? null;
+  let topShare: number | null = null;
+  try {
+    topShare = velocityTopShare?.(velocityMph) ?? null;
+  } catch {
+    // Fail soft: the caller-side lookup (makeVelocityTopShareLookup) logs
+    // the error; a decoration must never take down a message post.
+    topShare = null;
+  }
   if (topShare != null && topShare <= TOP_SHARE_FLEX_MAX_PCT) {
     line += ` (top ${Math.max(1, Math.ceil(topShare))}% this season)`;
   }
