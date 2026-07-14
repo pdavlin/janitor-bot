@@ -81,6 +81,10 @@ describe("page shell sharing", () => {
         mix: [],
         leaders: [],
         teamsBurned: [],
+        lanes: [],
+        cannons: [],
+        throws: [],
+        velocity: { total: 0, measured: 0, min: null, max: null, avg: null },
       }),
     ],
     ["about", renderAboutPage()],
@@ -122,6 +126,10 @@ describe("chart label fills", () => {
       ],
       leaders: [],
       teamsBurned: [],
+      lanes: [{ position: "CF", base: "Home", count: 6 }],
+      cannons: [],
+      throws: [],
+      velocity: { total: 10, measured: 0, min: null, max: null, avg: null },
     });
     expect(html).toContain('class="t-onfill"');
     expect(html).toContain('class="t-ink"');

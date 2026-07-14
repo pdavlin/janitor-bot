@@ -21,6 +21,24 @@ export interface GameFinalScore {
   home: number;
 }
 
+/**
+ * Resolves a throw velocity (mph) to the percent (0-100) of the season's
+ * measured throws at or above it, or null when nothing is measured yet.
+ * Injected by callers with DB access (queryVelocityTopShare) so this
+ * module stays delivery-agnostic and DB-free.
+ */
+export type VelocityTopShareLookup = (velocityMph: number) => number | null;
+
+/** Velocity at or above which the throw line gets the CANNON tag. */
+const CANNON_THRESHOLD_MPH = 98;
+
+/**
+ * Top-share ceiling (percent) for the "(top X% this season)" flex —
+ * only throws at or inside the season's top 10% (>= 90th percentile)
+ * earn the line.
+ */
+const TOP_SHARE_FLEX_MAX_PCT = 10;
+
 /** Emoji indicator mapped to each tier for visual color coding in Slack. */
 const TIER_EMOJI: Record<Tier, string> = {
   high: ":red_circle:",
@@ -80,6 +98,46 @@ export interface SlackPayload {
 }
 
 /**
+ * Builds the velocity context line with its flex flavor:
+ *
+ *   - always: "Throw: 96 mph (Statcast)"
+ *   - at 98+ mph: append " 🔫 CANNON"
+ *   - in the season's top 10% of measured throws (when a lookup is
+ *     provided): append " (top X% this season)", X >= 1
+ *
+ * The CANNON rule compares the rounded value so the tag always matches
+ * the rendered number (97.7 renders as "98 mph" and earns the tag).
+ * The percentile lookup fails soft: the flex is decoration, so a lookup
+ * error (e.g. SQLITE_BUSY mid-posting-loop) must degrade to the plain
+ * velocity line rather than abort the remaining posts.
+ *
+ * @param velocityMph - Positive measured throw velocity.
+ * @param velocityTopShare - Optional season top-share lookup.
+ */
+function buildVelocityLine(
+  velocityMph: number,
+  velocityTopShare?: VelocityTopShareLookup,
+): string {
+  const displayMph = Math.round(velocityMph);
+  let line = `Throw: ${displayMph} mph (Statcast)`;
+  if (displayMph >= CANNON_THRESHOLD_MPH) {
+    line += " 🔫 CANNON";
+  }
+  let topShare: number | null = null;
+  try {
+    topShare = velocityTopShare?.(velocityMph) ?? null;
+  } catch {
+    // Fail soft: the caller-side lookup (makeVelocityTopShareLookup) logs
+    // the error; a decoration must never take down a message post.
+    topShare = null;
+  }
+  if (topShare != null && topShare <= TOP_SHARE_FLEX_MAX_PCT) {
+    line += ` (top ${Math.max(1, Math.ceil(topShare))}% this season)`;
+  }
+  return line;
+}
+
+/**
  * Formats a half-inning string into a human-readable label.
  *
  * @param halfInning - "top" or "bottom"
@@ -111,9 +169,14 @@ export function formatSituation(outs: number, runnersOn: string): string {
  * score context, and an optional video button.
  *
  * @param play - The detected outfield assist play
+ * @param velocityTopShare - Optional season-percentile lookup for the
+ *   velocity flex line; omit to render the plain velocity line.
  * @returns Array of Slack blocks representing this play
  */
-function buildPlayBlocks(play: DetectedPlay | StoredPlay): SlackBlock[] {
+function buildPlayBlocks(
+  play: DetectedPlay | StoredPlay,
+  velocityTopShare?: VelocityTopShareLookup,
+): SlackBlock[] {
   const blocks: SlackBlock[] = [];
   const tierEmoji = TIER_EMOJI[play.tier];
   const tierLabel = TIER_LABEL[play.tier];
@@ -153,7 +216,7 @@ function buildPlayBlocks(play: DetectedPlay | StoredPlay): SlackBlock[] {
   // non-positive value as a velocity.
   const velocityLine =
     play.throwVelocity != null && play.throwVelocity > 0
-      ? `Throw: ${Math.round(play.throwVelocity)} mph (Statcast)`
+      ? buildVelocityLine(play.throwVelocity, velocityTopShare)
       : null;
 
   blocks.push({
@@ -198,9 +261,14 @@ function buildPlayBlocks(play: DetectedPlay | StoredPlay): SlackBlock[] {
  *
  * @param plays - Array of DetectedPlay objects from the same game.
  *   Caller is responsible for ensuring all plays share the same gamePk.
+ * @param velocityTopShare - Optional season-percentile lookup for the
+ *   velocity flex line.
  * @returns Slack Block Kit payload ready for webhook POST or chat.postMessage
  */
-export function buildGameMessage(plays: DetectedPlay[]): SlackPayload {
+export function buildGameMessage(
+  plays: DetectedPlay[],
+  velocityTopShare?: VelocityTopShareLookup,
+): SlackPayload {
   if (plays.length === 0) {
     return { blocks: [] };
   }
@@ -229,7 +297,7 @@ export function buildGameMessage(plays: DetectedPlay[]): SlackPayload {
 
   for (let i = 0; i < plays.length; i++) {
     blocks.push({ type: "divider" });
-    blocks.push(...buildPlayBlocks(plays[i]));
+    blocks.push(...buildPlayBlocks(plays[i], velocityTopShare));
   }
 
   // Slack Block Kit enforces a 50-block maximum per message.
@@ -309,11 +377,15 @@ export function buildGameHeaderMessage(
 /**
  * Builds a single play's blocks for use as a thread reply under the game
  * header in bot-token mode.
+ *
+ * @param velocityTopShare - Optional season-percentile lookup for the
+ *   velocity flex line.
  */
 export function buildPlayReplyMessage(
   play: DetectedPlay | StoredPlay,
+  velocityTopShare?: VelocityTopShareLookup,
 ): SlackPayload {
-  return { blocks: buildPlayBlocks(play) };
+  return { blocks: buildPlayBlocks(play, velocityTopShare) };
 }
 
 /**

@@ -31,6 +31,7 @@ import {
   type SlackClientConfig,
 } from "./slack-client";
 import { buildPlayReplyMessage } from "./slack-formatter";
+import { makeVelocityTopShareLookup } from "../storage/db";
 import type { StoredPlay } from "../types/play";
 import {
   getLatestRematchEvent,
@@ -441,7 +442,10 @@ async function applyOutcome(
     const updated = readPlayFull(args.db, args.gamePk, args.playIndex);
     let editOk = false;
     if (updated) {
-      const payload = buildPlayReplyMessage(updated);
+      const payload = buildPlayReplyMessage(
+        updated,
+        makeVelocityTopShareLookup(args.db, args.logger),
+      );
       editOk = await editPlayMessage(
         args.slackConfig,
         args.channel,

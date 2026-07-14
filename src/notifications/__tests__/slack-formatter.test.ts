@@ -75,6 +75,84 @@ describe("throw velocity annotation", () => {
     const result = buildGameMessage([makeMockPlay({ throwVelocity: -1 })]);
     expect(JSON.stringify(result.blocks)).not.toContain("Throw:");
   });
+
+  test("appends the CANNON tag at 98+ mph", () => {
+    const result = buildGameMessage([makeMockPlay({ throwVelocity: 102.7 })]);
+    expect(JSON.stringify(result.blocks)).toContain("Throw: 103 mph (Statcast) 🔫 CANNON");
+  });
+
+  test("tags a throw that ROUNDS to 98 so the rule matches the rendered number", () => {
+    const result = buildGameMessage([makeMockPlay({ throwVelocity: 97.7 })]);
+    expect(JSON.stringify(result.blocks)).toContain(
+      "Throw: 98 mph (Statcast) 🔫 CANNON",
+    );
+  });
+
+  test("does not append the CANNON tag when the rendered number is below 98", () => {
+    const result = buildGameMessage([makeMockPlay({ throwVelocity: 97.4 })]);
+    const json = JSON.stringify(result.blocks);
+    expect(json).toContain("Throw: 97 mph (Statcast)");
+    expect(json).not.toContain("CANNON");
+  });
+
+  test("a throwing percentile lookup fails soft to the plain velocity line", () => {
+    const result = buildGameMessage([makeMockPlay({ throwVelocity: 96.4 })], () => {
+      throw new Error("SQLITE_BUSY");
+    });
+    const json = JSON.stringify(result.blocks);
+    expect(json).toContain("Throw: 96 mph (Statcast)");
+    expect(json).not.toContain("this season");
+  });
+
+  test("appends the top-X% flex when the lookup puts the throw in the top 10%", () => {
+    const result = buildGameMessage(
+      [makeMockPlay({ throwVelocity: 96.4 })],
+      () => 2.4,
+    );
+    expect(JSON.stringify(result.blocks)).toContain(
+      "Throw: 96 mph (Statcast) (top 3% this season)",
+    );
+  });
+
+  test("floors the flex at top 1% for the season's hardest throw", () => {
+    const result = buildGameMessage(
+      [makeMockPlay({ throwVelocity: 102.7 })],
+      () => 0.4,
+    );
+    expect(JSON.stringify(result.blocks)).toContain(
+      "Throw: 103 mph (Statcast) 🔫 CANNON (top 1% this season)",
+    );
+  });
+
+  test("skips the flex outside the top 10% and when the lookup is null", () => {
+    const middling = buildGameMessage(
+      [makeMockPlay({ throwVelocity: 84.2 })],
+      () => 55,
+    );
+    expect(JSON.stringify(middling.blocks)).toContain("Throw: 84 mph (Statcast)");
+    expect(JSON.stringify(middling.blocks)).not.toContain("this season");
+
+    const unmeasured = buildGameMessage(
+      [makeMockPlay({ throwVelocity: 96.4 })],
+      () => null,
+    );
+    expect(JSON.stringify(unmeasured.blocks)).not.toContain("this season");
+  });
+
+  test("null velocity output is unchanged even with a lookup provided", () => {
+    const result = buildGameMessage([makeMockPlay({ throwVelocity: null })], () => 1);
+    expect(JSON.stringify(result.blocks)).not.toContain("Throw:");
+  });
+
+  test("buildPlayReplyMessage threads the lookup through", () => {
+    const result = buildPlayReplyMessage(
+      makeStoredPlay({ throwVelocity: 99.1 }),
+      () => 5,
+    );
+    expect(JSON.stringify(result.blocks)).toContain(
+      "Throw: 99 mph (Statcast) 🔫 CANNON (top 5% this season)",
+    );
+  });
 });
 
 describe("buildGameMessage", () => {
