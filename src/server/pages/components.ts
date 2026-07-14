@@ -185,8 +185,12 @@ export function playCard(play: StoredPlay): string {
   const kindClass = isDirect ? "kind" : "kind relay";
   const kindLabel = isDirect ? "direct" : "relay";
 
+  // Score is the game state when the play happened, not the final — keep it
+  // unbolded inside the situation cluster with an explicit marker so it can't
+  // read as a final score.
   const ctx = [
     halfInningShort(play.halfInning, play.inning),
+    `${play.awayScore}&ndash;${play.homeScore} at the time`,
     `${play.outs} out`,
     escapeHtml(runnersContext(play.runnersOn)),
   ].join(" &middot; ");
@@ -207,7 +211,6 @@ export function playCard(play: StoredPlay): string {
   <legend><a class="plink" href="/play/${play.id}">${escapeHtml(play.date)}</a></legend>
   <div class="matchup">
     ${teamBadge(play.awayTeam)}<span class="at">@</span>${teamBadge(play.homeTeam)}
-    <span class="score">${play.awayScore}&ndash;${play.homeScore}</span>
     <span class="ctx">${ctx}</span>
   </div>
   <p class="headline">${playHeadline(play)}</p>

@@ -225,8 +225,8 @@ function buildPlayBlocks(
       {
         type: "mrkdwn",
         text: velocityLine
-          ? `${formatInning(play.halfInning, play.inning)} | ${formatSituation(play.outs, play.runnersOn)} | ${play.awayTeam} ${play.awayScore} - ${play.homeTeam} ${play.homeScore}\n${velocityLine}`
-          : `${formatInning(play.halfInning, play.inning)} | ${formatSituation(play.outs, play.runnersOn)} | ${play.awayTeam} ${play.awayScore} - ${play.homeTeam} ${play.homeScore}`,
+          ? `${formatInning(play.halfInning, play.inning)} | ${formatSituation(play.outs, play.runnersOn)} | ${play.awayTeam} ${play.awayScore} - ${play.homeTeam} ${play.homeScore} at the time\n${velocityLine}`
+          : `${formatInning(play.halfInning, play.inning)} | ${formatSituation(play.outs, play.runnersOn)} | ${play.awayTeam} ${play.awayScore} - ${play.homeTeam} ${play.homeScore} at the time`,
       },
     ],
   });
