@@ -150,7 +150,7 @@ export function renderShareCardSvg(play: StoredPlay): string {
   </g>
   <line x1="60" y1="118" x2="1140" y2="118" stroke="${MUTED}" stroke-opacity="0.35" stroke-width="1"/>
 
-  <text x="60" y="168" font-family="${FONT}" font-size="30" fill="${INK}"><tspan font-weight="700">${escapeHtml(play.awayTeam)}</tspan><tspan fill="${MUTED}"> @ </tspan><tspan font-weight="700">${escapeHtml(play.homeTeam)}</tspan><tspan fill="${MUTED}">&#160;&#160;&#160;${play.awayScore}&#8211;${play.homeScore}&#160;&#160;&#183;&#160;&#160;${half} ${play.inning}&#160;&#160;&#183;&#160;&#160;${play.outs} out</tspan></text>
+  <text x="60" y="168" font-family="${FONT}" font-size="30" fill="${INK}"><tspan font-weight="700">${escapeHtml(play.awayTeam)}</tspan><tspan fill="${MUTED}"> @ </tspan><tspan font-weight="700">${escapeHtml(play.homeTeam)}</tspan><tspan fill="${MUTED}">&#160;&#160;&#160;${half} ${play.inning}&#160;&#160;&#183;&#160;&#160;${play.awayScore}&#8211;${play.homeScore} at the time&#160;&#160;&#183;&#160;&#160;${play.outs} out</tspan></text>
 
   <text x="60" y="268" font-family="${FONT}" font-size="${headlineSize}" font-weight="700" fill="${INK}">${escapeHtml(play.fielderName)} <tspan fill="${MUTED}" font-weight="400" font-size="40">(${escapeHtml(play.fielderPosition)})</tspan></text>
   <text x="60" y="334" font-family="${FONT}" font-size="40" fill="${INK}"><tspan fill="${ACCENT}">&#10230;</tspan> ${escapeHtml(play.targetBase)} <tspan fill="${MUTED}">&#183; cut down</tspan> ${escapeHtml(play.runnerName)}</text>

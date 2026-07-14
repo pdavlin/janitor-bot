@@ -171,7 +171,6 @@ main { flex: 1 0 auto; padding-block: var(--space_m) var(--space_xl); }
   padding: .05em .4em; font-size: .6875rem; font-weight: bold; letter-spacing: .5px; }
 .team-img { width: 20px; height: 20px; display: inline-block; vertical-align: -5px; }
 .at { color: var(--color-text-muted); }
-.score { font-variant-numeric: tabular-nums; font-weight: bold; }
 .ctx { color: var(--color-text-muted); font-size: .75rem; }
 .headline { margin: 0; font-size: .9375rem; line-height: 1.35; }
 .headline .pos { color: var(--color-text-muted); }

@@ -61,6 +61,12 @@ describe("formatShortDate", () => {
 });
 
 describe("playCard", () => {
+  test("renders the score inside the situation context with the at-the-time marker", () => {
+    const html = playCard(makeStoredPlay({ awayScore: 3, homeScore: 1 }));
+    expect(html).toContain("3&ndash;1 at the time");
+    expect(html).not.toContain('class="score"');
+  });
+
   test("escapes a DB-sourced runners-on context string", () => {
     const html = playCard(makeStoredPlay({ runnersOn: '<img src=x onerror=alert(1)>' }));
     expect(html).not.toContain("<img src=x");
