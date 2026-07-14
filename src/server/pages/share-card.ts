@@ -3,42 +3,71 @@
  * GET /play/:id/card.svg and inlined on the /play/:id permalink page.
  *
  * The card is fully self-contained: og-image renderers and social
- * scrapers never see the site's CSS, so every color is a hard-coded
- * LIGHT-theme base16 hex (no var(--...) references) and the font stack is
- * inlined on each text element.
+ * scrapers never see the site's CSS, so every color is an inlined
+ * LIGHT-theme hex (imported from theme.ts's exported constants — no
+ * var(--...) references) and the font stack is inlined per text element.
  */
 
 import type { StoredPlay } from "../../types/play";
 import { chainSegments, isDirectThrow } from "../../detection/ranking";
-import { escapeHtml, mph } from "./components";
+import { baseDisplay, escapeHtml, mph } from "./components";
+import { arcControlPoint, baseSlot } from "./charts";
+import {
+  ACCENT_HEX,
+  CHART_SLOT_HEX,
+  LIGHT_BG_HEX,
+  LIGHT_INK_HEX,
+  LIGHT_MUTED_HEX,
+} from "./theme";
 
-// Light-theme base16 hexes (theme.ts token layer, resolved by hand).
-const BG = "#f4ecec";
-const INK = "#292424";
-const MUTED = "#655d5d";
-const ACCENT = "#ca4949";
-
-/** Fixed base palette slots as hexes (theme.ts --chart-1..4). */
-const BASE_HEX: Record<string, string> = {
-  Home: "#ca4949",
-  "2B": "#00a3a3",
-  "3B": "#4f83d1",
-};
-
-/** Slot-4 amber reserve for anything else (legacy 1B rows). */
-const BASE_HEX_FALLBACK = "#c0761c";
+const BG = LIGHT_BG_HEX;
+const INK = LIGHT_INK_HEX;
+const MUTED = LIGHT_MUTED_HEX;
+const ACCENT = ACCENT_HEX;
 
 const FONT = "ui-monospace,SFMono-Regular,Menlo,monospace";
 
-/** Human phrasing for the target base ("at home" vs "at 2B"). */
-function baseText(targetBase: string): string {
-  return targetBase === "Home" ? "home" : targetBase;
+// --- credit-chain row layout -------------------------------------------------
+// The chain and the velocity flex box share the y452-522 band; the mini
+// diamond occupies x862+. The flex box sits at a fixed x so the chain gets
+// everything to its left, and the chain's font shrinks stepwise until the
+// text fits — sized so the longest real chain in the DB (5 segments) plus
+// one segment of headroom still clears the box.
+
+/** Left edge of the credit chain text. */
+const CHAIN_X = 60;
+
+/** Left edge of the velocity flex box. */
+const FLEX_X = 610;
+
+/** Minimum clearance between the chain text and the flex box. */
+const FLEX_GAP = 24;
+
+/** Right limit for the chain when no flex box renders (diamond at ~862). */
+const CHAIN_MAX_X_NO_FLEX = 840;
+
+/** Letter-spacing applied to the chain text, part of each glyph's advance. */
+const CHAIN_LETTER_SPACING = 3;
+
+/**
+ * Picks the largest step size at which the chain text fits the available
+ * width, estimating the monospace advance as 0.6em plus letter-spacing
+ * per glyph. The 22px floor fits a 6-segment chain (32 chars) in the
+ * flex-constrained width.
+ */
+function chainFontSize(plainChain: string, maxWidth: number): number {
+  for (const size of [40, 34, 28, 22] as const) {
+    if (plainChain.length * (size * 0.6 + CHAIN_LETTER_SPACING) <= maxWidth) {
+      return size;
+    }
+  }
+  return 22;
 }
 
 /**
  * The mini diamond with the throw arc, in a local 180×180-ish coordinate
  * space (home at 90,150; 2B at 90,30). Origin dot placement depends on
- * the fielder's position; the arc bows away from the diamond's center.
+ * the fielder's position; the arc bows via the shared arc-geometry helper.
  */
 function miniDiamond(play: StoredPlay): string {
   const TARGET: Record<string, { x: number; y: number }> = {
@@ -54,24 +83,8 @@ function miniDiamond(play: StoredPlay): string {
   };
   const origin = ORIGIN[play.fielderPosition] ?? ORIGIN.RF!;
   const target = TARGET[play.targetBase] ?? TARGET.Home!;
-  const arcColor = BASE_HEX[play.targetBase] ?? BASE_HEX_FALLBACK;
-
-  // Quadratic control point: bow perpendicular to the throw line, signed
-  // away from the diamond's center (90,90). A throw line pointing straight
-  // at the center (CF -> 2B or home) has no "away" side and defaults to
-  // bowing right.
-  const mx = (origin.x + target.x) / 2;
-  const my = (origin.y + target.y) / 2;
-  const dx = target.x - origin.x;
-  const dy = target.y - origin.y;
-  const len = Math.hypot(dx, dy) || 1;
-  const px = -dy / len;
-  const py = dx / len;
-  const outward = px * (mx - 90) + py * (my - 90);
-  const sign = outward !== 0 ? Math.sign(outward) : -1;
-  const bow = Math.min(60, Math.max(20, len * 0.4)) * sign;
-  const cx = Math.round(mx + px * bow);
-  const cy = Math.round(my + py * bow);
+  const arcColor = CHART_SLOT_HEX[baseSlot(play.targetBase)];
+  const { cx, cy } = arcControlPoint(origin, target, { x: 90, y: 90 }, 0.4, 20, 60);
 
   const baseRect = (p: { x: number; y: number }): string =>
     `<rect x="${p.x - 6}" y="${p.y - 6}" width="12" height="12" rx="1" transform="rotate(45 ${p.x} ${p.y})" fill="${BG}" stroke="${MUTED}"/>`;
@@ -84,15 +97,15 @@ function miniDiamond(play: StoredPlay): string {
     ${baseRect(TARGET["3B"]!)}
     <circle cx="${origin.x}" cy="${origin.y}" r="6" fill="${INK}"/>
     <text x="${origin.x}" y="${origin.y - 10}" text-anchor="middle" font-family="${FONT}" font-size="15" fill="${MUTED}">${escapeHtml(play.fielderPosition)}</text>
-    <path d="M${origin.x} ${origin.y} Q ${cx} ${cy} ${target.x} ${target.y}" fill="none" stroke="${arcColor}" stroke-width="5" stroke-linecap="round"/>
-    <text x="90" y="172" text-anchor="middle" font-family="${FONT}" font-size="15" fill="${MUTED}">${escapeHtml(baseText(play.targetBase))}</text>
+    <path d="M${origin.x} ${origin.y} Q ${Math.round(cx)} ${Math.round(cy)} ${target.x} ${target.y}" fill="none" stroke="${arcColor}" stroke-width="5" stroke-linecap="round"/>
+    <text x="90" y="172" text-anchor="middle" font-family="${FONT}" font-size="15" fill="${MUTED}">${escapeHtml(baseDisplay(play.targetBase))}</text>
   </g>`;
 }
 
 /** Velocity flex box, or an empty string when the play has no reading. */
 function velocityFlex(play: StoredPlay): string {
   if (play.throwVelocity == null || play.throwVelocity <= 0) return "";
-  return `<g transform="translate(430 452)">
+  return `<g transform="translate(${FLEX_X} 452)">
     <rect x="0" y="0" width="230" height="70" fill="none" stroke="${ACCENT}" stroke-width="1.5"/>
     <text x="20" y="47" font-family="${FONT}" font-size="46" font-weight="700" fill="${ACCENT}">${mph(play.throwVelocity)}</text>
     <text x="185" y="47" font-family="${FONT}" font-size="22" fill="${MUTED}">mph</text>
@@ -109,16 +122,21 @@ function velocityFlex(play: StoredPlay): string {
  */
 export function renderShareCardSvg(play: StoredPlay): string {
   const headlineSize = play.fielderName.length > 18 ? 44 : 54;
-  const chain = chainSegments(play.creditChain)
+  const segments = chainSegments(play.creditChain);
+  const plainChain = segments.join(" -> ");
+  const flexVelocity =
+    play.throwVelocity != null && play.throwVelocity > 0 ? play.throwVelocity : null;
+  const chainMaxWidth =
+    (flexVelocity != null ? FLEX_X - FLEX_GAP : CHAIN_MAX_X_NO_FLEX) - CHAIN_X;
+  const chainSize = chainFontSize(plainChain, chainMaxWidth);
+  const chain = segments
     .map((node) => escapeHtml(node))
     .join(`<tspan fill="${MUTED}"> -&gt; </tspan>`);
   const kind = isDirectThrow(play.creditChain) ? "direct" : "relay";
   const half = play.halfInning === "top" ? "top" : "bot";
   const velocityAria =
-    play.throwVelocity != null && play.throwVelocity > 0
-      ? `, a ${mph(play.throwVelocity)} mph throw`
-      : "";
-  const aria = `Share card: ${play.fielderName}, ${play.fielderPosition}, cut down ${play.runnerName} at ${baseText(play.targetBase)} on ${play.date}${velocityAria}, ${play.awayTeam} at ${play.homeTeam}.`;
+    flexVelocity != null ? `, a ${mph(flexVelocity)} mph throw` : "";
+  const aria = `Share card: ${play.fielderName}, ${play.fielderPosition}, cut down ${play.runnerName} at ${baseDisplay(play.targetBase)} on ${play.date}${velocityAria}, ${play.awayTeam} at ${play.homeTeam}.`;
 
   return `<svg viewBox="0 0 1200 630" width="1200" height="630" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${escapeHtml(aria)}">
   <rect x="0" y="0" width="1200" height="630" fill="${BG}"/>
@@ -139,8 +157,8 @@ export function renderShareCardSvg(play: StoredPlay): string {
 
   ${miniDiamond(play)}
 
-  <text x="60" y="452" font-family="${FONT}" font-size="22" letter-spacing="2" fill="${MUTED}">credit &#183; ${kind}</text>
-  <text x="60" y="492" font-family="${FONT}" font-size="40" letter-spacing="3" fill="${INK}">${chain}</text>
+  <text x="${CHAIN_X}" y="452" font-family="${FONT}" font-size="22" letter-spacing="2" fill="${MUTED}">credit &#183; ${kind}</text>
+  <text x="${CHAIN_X}" y="492" font-family="${FONT}" font-size="${chainSize}" letter-spacing="${CHAIN_LETTER_SPACING}" fill="${INK}">${chain}</text>
 
   ${velocityFlex(play)}
 

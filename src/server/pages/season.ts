@@ -20,8 +20,10 @@ import type {
   WeeklyCount,
 } from "../../storage/db";
 import { renderPage } from "./shell";
-import { dateSpan, emptyNote, escapeHtml, formatShortDate, mph, share } from "./components";
+import { dateSpan, escapeHtml, formatShortDate, mph, section, share } from "./components";
 import {
+  BASE_DISPLAY_ORDER,
+  STRIP_POSITIONS,
   baseColor,
   renderBeeswarm,
   renderChartLegend,
@@ -35,6 +37,7 @@ import {
   TOOLTIP_SCRIPT,
   type ChartRow,
 } from "./charts";
+import { VELOCITY_THRESHOLD_MPH } from "../../detection/ranking";
 
 /** Data the season page renders from; assembled by the route handler. */
 export interface SeasonPageData {
@@ -62,20 +65,6 @@ function subhead(data: SeasonPageData): string {
   const count = `${data.totalPlays} outfield assist${data.totalPlays === 1 ? "" : "s"} tracked`;
   if (!data.oldestPlay || !data.newestPlay) return count;
   return `${count} &middot; ${dateSpan(data.oldestPlay, data.newestPlay)}`;
-}
-
-const EMPTY_NOTE = emptyNote("no data yet.");
-
-/**
- * Wraps a section body in the page's standard fieldset + legend markup —
- * the same section-wrapper pattern as ops.ts's section(), with /season's
- * fieldset chrome. Pass null as the body for the shared empty state.
- */
-function section(legend: string, body: string | null): string {
-  return `<fieldset>
-    <legend>${legend}</legend>
-    ${body ?? EMPTY_NOTE}
-  </fieldset>`;
 }
 
 /** Chart 1: plays per ISO week. */
@@ -184,15 +173,12 @@ function mixSection(data: SeasonPageData): string {
   );
 }
 
-/** Fixed base order for the throw-map/beeswarm swatch legends. */
-const LEGEND_BASE_ORDER = ["Home", "2B", "3B", "1B"] as const;
-
 /**
  * Thin-swatch base legend for the velocity charts, listing only the bases
  * present in the data, in fixed Home/2B/3B/1B order with lowercase labels.
  */
 function baseSwatchLegend(present: ReadonlySet<string>): string {
-  const items = LEGEND_BASE_ORDER.filter((base) => present.has(base)).map(
+  const items = BASE_DISPLAY_ORDER.filter((base) => present.has(base)).map(
     (base) => ({ label: base.toLowerCase(), color: baseColor(base) }),
   );
   return renderChartLegend(items, "map-legend");
@@ -229,12 +215,19 @@ function cannonSection(data: SeasonPageData): string {
   }
 
   const topMph = data.velocity.max;
+  // Bars scale from the floor to the season max. When the max is at or
+  // below the floor (a thin early-season sample), every bar pins full so
+  // the division can never yield NaN or a >100% width.
+  const scaleRange = topMph - CANNON_FLOOR_MPH;
   const items = data.cannons
     .map((cannon, i) => {
-      const pct = Math.max(
-        4,
-        ((cannon.maxVelocity - CANNON_FLOOR_MPH) / (topMph - CANNON_FLOOR_MPH)) * 100,
-      );
+      const pct =
+        scaleRange <= 0
+          ? 100
+          : Math.min(
+              100,
+              Math.max(4, ((cannon.maxVelocity - CANNON_FLOOR_MPH) / scaleRange) * 100),
+            );
       return `<li>
         <span class="rank">${i + 1}</span>
         <span class="who"><a class="name" href="/fielders/${cannon.fielderId}">${escapeHtml(cannon.fielderName)}</a><span class="pos">${escapeHtml(cannon.position)}</span></span>
@@ -263,13 +256,21 @@ function cannonSection(data: SeasonPageData): string {
   );
 }
 
-/** Velocity histogram buckets for the beeswarm's data-table twin. */
+/**
+ * Velocity histogram buckets for the beeswarm's data-table twin. The top
+ * bucket boundary is the tier scorer's velocity-bonus threshold, so the
+ * table's "95+" row always matches the charts' rule line and ranking.ts.
+ */
 const VELOCITY_BUCKETS: ReadonlyArray<{ label: string; min: number; max: number }> = [
   { label: "under 70", min: -Infinity, max: 70 },
   { label: "70–79", min: 70, max: 80 },
   { label: "80–89", min: 80, max: 90 },
-  { label: "90–94", min: 90, max: 95 },
-  { label: "95+", min: 95, max: Infinity },
+  {
+    label: `90–${VELOCITY_THRESHOLD_MPH - 1}`,
+    min: 90,
+    max: VELOCITY_THRESHOLD_MPH,
+  },
+  { label: `${VELOCITY_THRESHOLD_MPH}+`, min: VELOCITY_THRESHOLD_MPH, max: Infinity },
 ];
 
 /** New section 3: the velocity-spread beeswarm with its bucket table twin. */
@@ -297,9 +298,6 @@ function velocitySpreadSection(data: SeasonPageData): string {
     )}`,
   );
 }
-
-/** Positions in strip order, matching renderPositionStrips. */
-const STRIP_POSITIONS = ["LF", "CF", "RF"] as const;
 
 /** New section 4: per-position velocity strips with a summary table twin. */
 function armByPositionSection(data: SeasonPageData): string {

@@ -16,15 +16,22 @@ import type {
 } from "../../storage/db";
 import { renderPage } from "./shell";
 import {
+  baseDisplay,
   dateSpan,
   emptyNote,
   escapeHtml,
   mph,
   playCard,
+  section,
   statTile,
   teamBadge,
 } from "./components";
-import { baseColor, renderMiniThrowMap, renderVelocityStrip } from "./charts";
+import {
+  BASE_DISPLAY_ORDER,
+  baseColor,
+  renderMiniThrowMap,
+  renderVelocityStrip,
+} from "./charts";
 
 /** Data the fielder page renders from; assembled by the route handler. */
 export interface FielderPageData {
@@ -56,7 +63,7 @@ function profileHead(profile: FielderProfile): string {
     <h1 class="title">${escapeHtml(profile.fielderName)}</h1>
     <div class="profile-meta">
       <span class="pos-tag">${escapeHtml(profile.position)}</span>
-      <span class="era">${escapeHtml(profile.team)} ${positionLong(profile.position)} &middot; ${assists}, ${dateSpan(profile.oldestPlay, profile.newestPlay)}</span>
+      <span class="era">${escapeHtml(profile.team)} ${escapeHtml(positionLong(profile.position))} &middot; ${assists}, ${dateSpan(profile.oldestPlay, profile.newestPlay)}</span>
     </div>
   </div>`;
 }
@@ -89,42 +96,39 @@ function statTiles(profile: FielderProfile): string {
 
 /** Mini throw map panel with the per-base count key. */
 function throwMapPanel(data: FielderPageData): string {
+  const legend = "throw map";
   if (data.lanes.length === 0) {
-    return `<fieldset>
-      <legend>throw map</legend>
-      ${emptyNote("no throws tracked yet.")}
-    </fieldset>`;
+    return section(legend, null, "no throws tracked yet.");
   }
 
   const byBase = new Map<string, number>();
   for (const lane of data.lanes) {
     byBase.set(lane.base, (byBase.get(lane.base) ?? 0) + lane.count);
   }
-  const keyOrder = ["Home", "2B", "3B", "1B"];
-  const key = keyOrder
-    .filter((base) => byBase.has(base))
+  const key = BASE_DISPLAY_ORDER.filter((base) => byBase.has(base))
     .map(
       (base) =>
-        `<span class="k"><span class="swatch" style="background:${baseColor(base)}"></span>${base === "Home" ? "home" : base} <span class="n">${byBase.get(base)}</span></span>`,
+        `<span class="k"><span class="swatch" style="background:${baseColor(base)}"></span>${baseDisplay(base)} <span class="n">${byBase.get(base)}</span></span>`,
     )
     .join("\n        ");
 
   const laneSummary = data.lanes
-    .map((lane) => `${lane.count} to ${lane.base === "Home" ? "home" : lane.base}`)
+    .map((lane) => `${lane.count} to ${baseDisplay(lane.base)}`)
     .join(", ");
   const aria = `Diamond showing ${data.profile.fielderName}'s throws: ${laneSummary}.`;
 
-  return `<fieldset>
-      <legend>throw map</legend>
-      ${renderMiniThrowMap(data.lanes, aria)}
+  return section(
+    legend,
+    `${renderMiniThrowMap(data.lanes, aria)}
       <div class="map-key">
         ${key}
-      </div>
-    </fieldset>`;
+      </div>`,
+  );
 }
 
 /** Personal velocity strip panel against the muted league band. */
 function velocityPanel(data: FielderPageData): string {
+  const legend = "arm velocity";
   const { profile, league } = data;
   if (
     data.velocities.length === 0 ||
@@ -132,21 +136,18 @@ function velocityPanel(data: FielderPageData): string {
     league.max == null ||
     league.avg == null
   ) {
-    return `<fieldset>
-      <legend>arm velocity</legend>
-      ${emptyNote("no measured throws yet.")}
-    </fieldset>`;
+    return section(legend, null, "no measured throws yet.");
   }
 
   const min = data.velocities[0]!;
   const max = data.velocities[data.velocities.length - 1]!;
   const aria = `${profile.fielderName}'s ${data.velocities.length} measured throws plotted on a miles-per-hour axis against the muted league range of ${mph(league.min)} to ${mph(league.max)} mph. The throws span ${mph(min)} to ${mph(max)} mph.`;
 
-  return `<fieldset>
-      <legend>arm velocity</legend>
-      ${renderVelocityStrip(data.velocities, { min: league.min, max: league.max }, aria)}
-      <p class="viz-cap">${data.velocities.length} throw${data.velocities.length === 1 ? "" : "s"} measured &middot; ${mph(min)}&ndash;${mph(max)} mph &middot; league avg ${mph(league.avg)}</p>
-    </fieldset>`;
+  return section(
+    legend,
+    `${renderVelocityStrip(data.velocities, { min: league.min, max: league.max }, aria)}
+      <p class="viz-cap">${data.velocities.length} throw${data.velocities.length === 1 ? "" : "s"} measured &middot; ${mph(min)}&ndash;${mph(max)} mph &middot; league avg ${mph(league.avg)}</p>`,
+  );
 }
 
 /** Tier-mix panel: one dot + bar row per tier. */
@@ -170,21 +171,19 @@ function tierMixPanel(profile: FielderProfile): string {
     })
     .join("\n        ");
 
-  return `<fieldset>
-      <legend>tier mix</legend>
-      <div class="tier-rows">
+  return section(
+    "tier mix",
+    `<div class="tier-rows">
         ${rows}
-      </div>
-    </fieldset>`;
+      </div>`,
+  );
 }
 
 /** Teams-burned mini list panel. */
 function teamsBurnedPanel(teamsBurned: TeamBurnCount[]): string {
+  const legend = "teams burned";
   if (teamsBurned.length === 0) {
-    return `<fieldset>
-      <legend>teams burned</legend>
-      ${emptyNote("no runners cut down yet.")}
-    </fieldset>`;
+    return section(legend, null, "no runners cut down yet.");
   }
   const items = teamsBurned
     .map(
@@ -192,12 +191,12 @@ function teamsBurnedPanel(teamsBurned: TeamBurnCount[]): string {
         `<li>${teamBadge(team.team)}<span class="x">&times;${team.count}</span></li>`,
     )
     .join("\n        ");
-  return `<fieldset>
-      <legend>teams burned</legend>
-      <ul class="burned">
+  return section(
+    legend,
+    `<ul class="burned">
         ${items}
-      </ul>
-    </fieldset>`;
+      </ul>`,
+  );
 }
 
 /** Renders the full fielder profile page HTML document. */

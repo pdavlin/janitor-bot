@@ -12,6 +12,7 @@
  */
 
 import { escapeHtml, mph } from "./components";
+import { VELOCITY_THRESHOLD_MPH } from "../../detection/ranking";
 import type { MeasuredThrow, ThrowLane } from "../../storage/db";
 
 /** One labelled numeric row (weekly bars and horizontal bar charts). */
@@ -270,16 +271,26 @@ export function renderMixChart(rows: MixRow[], ariaLabel: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Fixed categorical slot per target base (design brief, never cycled).
- * Home/direct on slot 1, 2B/relay on slot 2, 3B on slot 3, anything else
- * (legacy 1B rows) on the slot-4 amber reserve.
+ * Fixed categorical palette slot per target base (design brief, never
+ * cycled): Home/direct on slot 0, 2B/relay on slot 1, 3B on slot 2,
+ * anything else (legacy 1B rows) on the slot-3 amber reserve. The single
+ * encoding of the base→slot rule; baseColor maps it to the CSS tokens and
+ * the share card maps it to theme.ts's CHART_SLOT_HEX.
  */
-export function baseColor(base: string): string {
-  if (base === "Home") return "var(--chart-1)";
-  if (base === "2B") return "var(--chart-2)";
-  if (base === "3B") return "var(--chart-3)";
-  return "var(--chart-4)";
+export function baseSlot(base: string): 0 | 1 | 2 | 3 {
+  if (base === "Home") return 0;
+  if (base === "2B") return 1;
+  if (base === "3B") return 2;
+  return 3;
 }
+
+/** CSS color expression for a target base's fixed palette slot. */
+export function baseColor(base: string): string {
+  return `var(--chart-${baseSlot(base) + 1})`;
+}
+
+/** Display order for base legends/keys: Home first, then the bags. */
+export const BASE_DISPLAY_ORDER = ["Home", "2B", "3B", "1B"] as const;
 
 /**
  * Deterministic PRNG (mulberry32) for the jittered arc/dot placements, so
@@ -303,8 +314,38 @@ const THROW_MAP_BASE_ORDER = ["2B", "Home", "3B", "1B"] as const;
 const MPH_AXIS_MIN = 25;
 const MPH_AXIS_MAX = 105;
 
-/** The tier scorer's velocity bonus threshold, marked on the mph axes. */
-const TIER_BONUS_MPH = 95;
+/**
+ * Quadratic-bow control point for a throw arc: perpendicular to the
+ * origin→target line, signed away from the diamond's center so arcs
+ * clear the infield. A throw line pointing straight at the center
+ * (CF -> 2B or CF -> home) has no "away" side and defaults to bowing
+ * right, fanning collinear arcs apart. Shared by the fielder mini map
+ * and the share-card diamond.
+ *
+ * @param bowFactor - Bow magnitude as a fraction of the arc length.
+ * @param minBow    - Smallest bow, so short arcs still read as arcs.
+ * @param maxBow    - Largest bow, so long arcs stay inside the frame.
+ */
+export function arcControlPoint(
+  origin: { x: number; y: number },
+  target: { x: number; y: number },
+  center: { x: number; y: number },
+  bowFactor: number,
+  minBow: number,
+  maxBow: number,
+): { cx: number; cy: number } {
+  const mx = (origin.x + target.x) / 2;
+  const my = (origin.y + target.y) / 2;
+  const dx = target.x - origin.x;
+  const dy = target.y - origin.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const px = -dy / len;
+  const py = dx / len;
+  const outward = px * (mx - center.x) + py * (my - center.y);
+  const sign = outward !== 0 ? Math.sign(outward) : -1;
+  const bow = Math.min(maxBow, Math.max(minBow, len * bowFactor)) * sign;
+  return { cx: mx + px * bow, cy: my + py * bow };
+}
 
 /**
  * Season throw map: bird's-eye diamond with one thin low-opacity arc per
@@ -444,22 +485,7 @@ export function renderMiniThrowMap(lanes: ThrowLane[], ariaLabel: string): strin
     if (!origin || !target) continue;
     drawnOrigins.add(lane.position);
     const width = 2 + 4 * (lane.count / maxCount);
-    // Quadratic bow perpendicular to the throw line, signed away from the
-    // diamond's center so arcs clear the infield. A throw line pointing
-    // straight at the center (CF -> 2B -> home) has no "away" side, so
-    // those arcs default to bowing right, fanning them apart.
-    const mx = (origin.x + target.x) / 2;
-    const my = (origin.y + target.y) / 2;
-    const dx = target.x - origin.x;
-    const dy = target.y - origin.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const px = -dy / len;
-    const py = dx / len;
-    const outward = px * (mx - CENTER.x) + py * (my - CENTER.y);
-    const sign = outward !== 0 ? Math.sign(outward) : -1;
-    const bow = Math.min(55, Math.max(12, len * 0.35)) * sign;
-    const cx = mx + px * bow;
-    const cy = my + py * bow;
+    const { cx, cy } = arcControlPoint(origin, target, CENTER, 0.35, 12, 55);
     parts.push(
       `<path d="M${fmt(origin.x)} ${fmt(origin.y)} Q ${fmt(cx)} ${fmt(cy)} ${fmt(target.x)} ${fmt(target.y)}" fill="none" stroke="${baseColor(lane.base)}" stroke-width="${fmt(width)}" stroke-linecap="round" opacity="0.92"/>`,
     );
@@ -487,9 +513,15 @@ export function renderMiniThrowMap(lanes: ThrowLane[], ariaLabel: string): strin
   return `<svg class="viz" viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(ariaLabel)}">${parts.join("")}</svg>`;
 }
 
-/** X position on the shared mph axis. */
+/**
+ * X position on the shared mph axis. The velocity is clamped to the
+ * fixed 25-105 domain so an out-of-range reading (a future 106 mph
+ * outlier, or a junk sub-25 value) pins to the axis edge instead of
+ * plotting outside the chart frame.
+ */
 function mphX(v: number, plotLeft: number, plotWidth: number): number {
-  return plotLeft + ((v - MPH_AXIS_MIN) / (MPH_AXIS_MAX - MPH_AXIS_MIN)) * plotWidth;
+  const clamped = Math.min(MPH_AXIS_MAX, Math.max(MPH_AXIS_MIN, v));
+  return plotLeft + ((clamped - MPH_AXIS_MIN) / (MPH_AXIS_MAX - MPH_AXIS_MIN)) * plotWidth;
 }
 
 /** One beeswarm dot with a native <title> tooltip. */
@@ -530,10 +562,10 @@ export function renderBeeswarm(throws: MeasuredThrow[], ariaLabel: string): stri
   }
   parts.push(`<text x="${W - PR}" y="${bot + 15}" text-anchor="end" font-size="9.5" class="t-ink">mph</text>`);
 
-  const ruleX = mphX(TIER_BONUS_MPH, PL, plotW);
+  const ruleX = mphX(VELOCITY_THRESHOLD_MPH, PL, plotW);
   parts.push(
     `<line x1="${fmt(ruleX)}" y1="${PT - 12}" x2="${fmt(ruleX)}" y2="${bot}" stroke="var(--accent-color)" stroke-width="1" stroke-dasharray="3 3"/>`,
-    `<text x="${fmt(ruleX)}" y="${PT - 16}" text-anchor="middle" font-size="9.5" class="t-ink">${TIER_BONUS_MPH} &middot; tier bonus</text>`,
+    `<text x="${fmt(ruleX)}" y="${PT - 16}" text-anchor="middle" font-size="9.5" class="t-ink">${VELOCITY_THRESHOLD_MPH} &middot; tier bonus</text>`,
   );
 
   const bandTop = PT + 2;
@@ -548,7 +580,7 @@ export function renderBeeswarm(throws: MeasuredThrow[], ariaLabel: string): stri
 }
 
 /** Outfield positions, top-to-bottom order for the position strips. */
-const STRIP_POSITIONS = ["LF", "CF", "RF"] as const;
+export const STRIP_POSITIONS = ["LF", "CF", "RF"] as const;
 
 /**
  * Arm-by-position strips: LF/CF/RF mini beeswarms stacked on one shared
@@ -578,7 +610,7 @@ export function renderPositionStrips(throws: MeasuredThrow[], ariaLabel: string)
   }
   parts.push(`<text x="${W - PR}" y="${bottomY + 15}" text-anchor="end" font-size="9.5" class="t-ink">mph</text>`);
 
-  const ruleX = mphX(TIER_BONUS_MPH, PL, plotW);
+  const ruleX = mphX(VELOCITY_THRESHOLD_MPH, PL, plotW);
   parts.push(
     `<line x1="${fmt(ruleX)}" y1="${PT}" x2="${fmt(ruleX)}" y2="${bottomY}" stroke="var(--accent-color)" stroke-width="1" stroke-dasharray="3 3"/>`,
   );
@@ -622,12 +654,16 @@ export function renderVelocityStrip(
   const H = 96;
   const AXMIN = 30;
   const AXMAX = 105;
-  const x = (v: number): number => 30 + ((v - AXMIN) / (AXMAX - AXMIN)) * 350;
+  // Clamp to the axis domain, matching mphX's out-of-range policy.
+  const x = (v: number): number => {
+    const clamped = Math.min(AXMAX, Math.max(AXMIN, v));
+    return 30 + ((clamped - AXMIN) / (AXMAX - AXMIN)) * 350;
+  };
   const parts: string[] = [];
 
   // Muted league band.
-  const bandX = x(Math.max(AXMIN, league.min));
-  const bandW = Math.max(0, x(Math.min(AXMAX, league.max)) - bandX);
+  const bandX = x(league.min);
+  const bandW = Math.max(0, x(league.max) - bandX);
   parts.push(
     `<rect x="${fmt(bandX)}" y="34" width="${fmt(bandW)}" height="16" rx="2" fill="color-mix(in oklch, var(--color-text) 9%, transparent)"/>`,
     `<text x="${fmt(bandX + bandW)}" y="28" text-anchor="end" font-size="8">league range</text>`,

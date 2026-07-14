@@ -17,6 +17,30 @@
  * grid. Guarded by src/server/pages/__tests__/theme.test.ts.
  */
 
+/**
+ * Base16 hexes shared beyond the CSS: the share-card SVG must inline
+ * literal colors (og-image renderers never see this stylesheet), so these
+ * constants build both the token layer below and the card. Names carry
+ * the light theme's role for each slot.
+ */
+export const LIGHT_INK_HEX = "#292424"; // --base_01
+export const LIGHT_MUTED_HEX = "#655d5d"; // --base_03
+export const LIGHT_BG_HEX = "#f4ecec"; // --base_07
+export const ACCENT_HEX = "#ca4949"; // --base_08
+
+/**
+ * Fixed categorical chart palette (design brief slots 1-4, never cycled),
+ * theme-independent. Slot order: primary/Home/direct, 2B/relay, 3B, amber
+ * reserve (legacy 1B). Builds both the --chart-N tokens and the
+ * share-card's inline arc colors.
+ */
+export const CHART_SLOT_HEX = [
+  ACCENT_HEX,
+  "#00a3a3",
+  "#4f83d1",
+  "#c0761c",
+] as const;
+
 export const THEME_CSS = `
 /* ---- minimal reset ---- */
 *, *::before, *::after { box-sizing: border-box; }
@@ -24,9 +48,9 @@ body { margin: 0; }
 
 /* ---- token layer (design brief; spaced calc operators, see module doc) ---- */
 :root {
-  --base_00:#1b1818; --base_01:#292424; --base_02:#585050; --base_03:#655d5d;
-  --base_04:#7e7777; --base_05:#8a8585; --base_06:#e7dfdf; --base_07:#f4ecec;
-  --base_08:#ca4949; --base_09:#b45a3c; --base_0a:#a06e3b; --base_0b:#4b8b8b;
+  --base_00:#1b1818; --base_01:${LIGHT_INK_HEX}; --base_02:#585050; --base_03:${LIGHT_MUTED_HEX};
+  --base_04:#7e7777; --base_05:#8a8585; --base_06:#e7dfdf; --base_07:${LIGHT_BG_HEX};
+  --base_08:${ACCENT_HEX}; --base_09:#b45a3c; --base_0a:#a06e3b; --base_0b:#4b8b8b;
   --base_0c:#5485b6; --base_0d:#7272ca; --base_0e:#8464c4; --base_0f:#bd5187;
 
   --accent-color: var(--base_08);
@@ -53,10 +77,10 @@ body { margin: 0; }
                'Liberation Mono', monospace;
 
   /* validated categorical chart palette — fixed hexes, theme-independent */
-  --chart-1:#ca4949; /* primary · Home · direct */
-  --chart-2:#00a3a3; /* 2B · relay */
-  --chart-3:#4f83d1; /* 3B */
-  --chart-4:#c0761c; /* reserve · 1B */
+  --chart-1:${CHART_SLOT_HEX[0]}; /* primary · Home · direct */
+  --chart-2:${CHART_SLOT_HEX[1]}; /* 2B · relay */
+  --chart-3:${CHART_SLOT_HEX[2]}; /* 3B */
+  --chart-4:${CHART_SLOT_HEX[3]}; /* reserve · 1B */
 
   /* tier ordinal ramp (single-hue sequential from accent) */
   --tier-high: var(--base_08);

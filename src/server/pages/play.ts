@@ -11,7 +11,7 @@
 
 import type { StoredPlay } from "../../types/play";
 import { renderPage } from "./shell";
-import { escapeHtml, mph, playCard } from "./components";
+import { baseDisplay, escapeHtml, mph, playCard } from "./components";
 import { renderShareCardSvg } from "./share-card";
 
 /**
@@ -21,18 +21,13 @@ import { renderShareCardSvg } from "./share-card";
  */
 export const SITE_ORIGIN = "https://janitor-bot.exe.xyz";
 
-/** Human phrasing for the target base ("at home" vs "at 2B"). */
-function baseText(targetBase: string): string {
-  return targetBase === "Home" ? "home" : targetBase;
-}
-
 /** og:title, e.g. "Jac Caglianone (RF) cuts down Nick Sogard at home — 102.7 mph". */
 function ogTitle(play: StoredPlay): string {
   const velocity =
     play.throwVelocity != null && play.throwVelocity > 0
       ? ` — ${mph(play.throwVelocity)} mph`
       : "";
-  return `${play.fielderName} (${play.fielderPosition}) cuts down ${play.runnerName} at ${baseText(play.targetBase)}${velocity}`;
+  return `${play.fielderName} (${play.fielderPosition}) cuts down ${play.runnerName} at ${baseDisplay(play.targetBase)}${velocity}`;
 }
 
 /** og:description: matchup, date, tier, and the credit chain. */

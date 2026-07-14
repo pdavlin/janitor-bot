@@ -225,6 +225,25 @@ describe("cannon update pages (seeded DB)", () => {
       const { body } = await getPage("/season");
       expect(body).toContain('<a class="name" href="/fielders/681624">Andy Pages</a>');
     });
+
+    test("cannon bars never produce NaN when the max sits at the scale floor", async () => {
+      // Re-seed so every measured velocity equals the 88 mph bar floor:
+      // the scale range is 0 and the guard must pin bars at 100%.
+      db.run("DELETE FROM plays");
+      insertPlays(db, [
+        makeMockPlay({ throwVelocity: 88 }),
+        makeMockPlay({
+          gamePk: 717409,
+          playIndex: 3,
+          runnerId: 444444,
+          throwVelocity: 88,
+        }),
+      ]);
+      const { res, body } = await getPage("/season");
+      expect(res.status).toBe(200);
+      expect(body).not.toContain("NaN");
+      expect(body).toContain('cannon-bar-fill" style="width:100.0%"');
+    });
   });
 
   // -------------------------------------------------------------------------

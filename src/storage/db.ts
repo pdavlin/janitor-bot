@@ -14,6 +14,7 @@
 import { Database } from "bun:sqlite";
 import type { Tier, FetchStatus, DetectedPlay, StoredPlay } from "../types/play";
 import type { PlayEventDecision } from "../notifications/play-rematch-events-store";
+import type { Logger } from "../logger";
 import { isDirectThrow } from "../detection/ranking";
 
 export type { DetectedPlay, StoredPlay } from "../types/play";
@@ -899,6 +900,18 @@ export function queryDirectRelayByBase(db: Database): BaseThrowMix[] {
 }
 
 /**
+ * Correlated subquery selecting a fielder's modal position: the one they
+ * recorded the most assists from, ties broken alphabetically. Requires
+ * the outer plays table to be aliased `p`. Shared by the arm leaderboard,
+ * the cannon rankings, and the fielder profile so the position rule can't
+ * drift between the three.
+ */
+export const MODAL_POSITION_SQL = `(SELECT p2.fielder_position FROM plays p2
+          WHERE p2.fielder_id = p.fielder_id
+          GROUP BY p2.fielder_position
+          ORDER BY COUNT(*) DESC, p2.fielder_position ASC LIMIT 1)`;
+
+/**
  * Top fielders by assist count with per-tier splits. Position is the one
  * the fielder recorded the most assists from (ties broken alphabetically).
  */
@@ -907,10 +920,7 @@ export function queryArmLeaderboard(db: Database, limit = 10): FielderLeader[] {
     .prepare(
       `SELECT fielder_id,
          MAX(fielder_name) AS fielder_name,
-         (SELECT p2.fielder_position FROM plays p2
-          WHERE p2.fielder_id = p.fielder_id
-          GROUP BY p2.fielder_position
-          ORDER BY COUNT(*) DESC, p2.fielder_position ASC LIMIT 1) AS position,
+         ${MODAL_POSITION_SQL} AS position,
          COUNT(*) AS total,
          SUM(CASE WHEN tier = 'high' THEN 1 ELSE 0 END) AS high,
          SUM(CASE WHEN tier = 'medium' THEN 1 ELSE 0 END) AS medium,
@@ -1078,10 +1088,7 @@ export function queryCannonRankings(db: Database, limit = 10): CannonLeader[] {
     .prepare(
       `SELECT fielder_id,
          MAX(fielder_name) AS fielder_name,
-         (SELECT p2.fielder_position FROM plays p2
-          WHERE p2.fielder_id = p.fielder_id
-          GROUP BY p2.fielder_position
-          ORDER BY COUNT(*) DESC, p2.fielder_position ASC LIMIT 1) AS position,
+         ${MODAL_POSITION_SQL} AS position,
          MAX(throw_velocity) AS max_velocity,
          AVG(throw_velocity) AS avg_velocity,
          COUNT(*) AS throw_count
@@ -1139,6 +1146,29 @@ export function queryMeasuredThrows(db: Database, fielderId?: number): MeasuredT
   }));
 }
 
+/**
+ * Derives a VelocitySummary from an already-fetched measured-throw list
+ * (ascending, as queryMeasuredThrows returns) plus the total play count.
+ * The /season handler uses this instead of a second aggregate query;
+ * paths without the throw list in hand use queryVelocitySummary.
+ */
+export function velocitySummaryFromThrows(
+  throws: MeasuredThrow[],
+  total: number,
+): VelocitySummary {
+  if (throws.length === 0) {
+    return { total, measured: 0, min: null, max: null, avg: null };
+  }
+  const sum = throws.reduce((acc, t) => acc + t.velocity, 0);
+  return {
+    total,
+    measured: throws.length,
+    min: throws[0]!.velocity,
+    max: throws[throws.length - 1]!.velocity,
+    avg: sum / throws.length,
+  };
+}
+
 /** Coverage and range of measured throw velocities across the season. */
 export function queryVelocitySummary(db: Database): VelocitySummary {
   const row = db
@@ -1175,6 +1205,29 @@ export function queryVelocityTopShare(db: Database, velocityMph: number): number
     .get({ $mph: velocityMph }) as { measured: number; at_or_above: number };
   if (row.measured === 0) return null;
   return (row.at_or_above / row.measured) * 100;
+}
+
+/**
+ * Wraps queryVelocityTopShare as the fail-soft lookup the Slack velocity
+ * flex line expects: any query error (e.g. SQLITE_BUSY mid posting loop)
+ * is logged at warn and resolves to null, so the message still posts with
+ * the plain velocity line. Shared by every buildPlayBlocks caller with a
+ * DB handle.
+ */
+export function makeVelocityTopShareLookup(
+  db: Database,
+  logger: Logger,
+): (velocityMph: number) => number | null {
+  return (velocityMph) => {
+    try {
+      return queryVelocityTopShare(db, velocityMph);
+    } catch (err) {
+      logger.warn("velocity top-share lookup failed; skipping flex line", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1218,10 +1271,7 @@ export function queryFielderProfile(db: Database, fielderId: number): FielderPro
     .prepare(
       `SELECT fielder_id,
          MAX(fielder_name) AS fielder_name,
-         (SELECT p2.fielder_position FROM plays p2
-          WHERE p2.fielder_id = p.fielder_id
-          GROUP BY p2.fielder_position
-          ORDER BY COUNT(*) DESC, p2.fielder_position ASC LIMIT 1) AS position,
+         ${MODAL_POSITION_SQL} AS position,
          (SELECT CASE p3.half_inning WHEN 'top' THEN p3.home_team ELSE p3.away_team END AS team
           FROM plays p3 WHERE p3.fielder_id = p.fielder_id
           GROUP BY team ORDER BY COUNT(*) DESC, team ASC LIMIT 1) AS team,

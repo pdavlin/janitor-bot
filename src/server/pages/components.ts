@@ -94,6 +94,37 @@ export function emptyNote(text: string): string {
 }
 
 /**
+ * Standard page section: a fieldset with a legend, falling back to a
+ * muted empty note when the body is null. Shared by the /season sections
+ * and the fielder-profile panels. (The /ops page keeps its own local
+ * section helper: its sections are section-head divs grouped inside
+ * larger fieldsets, a structurally different shape.)
+ *
+ * @param legend    - Trusted lowercase section label.
+ * @param body      - Pre-escaped section markup, or null for the empty state.
+ * @param emptyText - Empty-state copy (escaped by emptyNote).
+ */
+export function section(
+  legend: string,
+  body: string | null,
+  emptyText = "no data yet.",
+): string {
+  return `<fieldset>
+    <legend>${legend}</legend>
+    ${body ?? emptyNote(emptyText)}
+  </fieldset>`;
+}
+
+/**
+ * Display form of a target base: "Home" reads as lowercase "home" in
+ * running text and labels; the numbered bases stay as-is. Shared by the
+ * throw-map keys, the permalink og copy, and the share card.
+ */
+export function baseDisplay(targetBase: string): string {
+  return targetBase === "Home" ? "home" : targetBase;
+}
+
+/**
  * Velocity display: one decimal, Statcast convention (e.g. "101.2").
  * Shared by the play card chip, the season velocity sections, the fielder
  * page, and the share card.

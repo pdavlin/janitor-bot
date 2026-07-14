@@ -5,7 +5,16 @@
  */
 
 import { test, expect, describe } from "bun:test";
-import { renderHBarChart, renderMixChart, type ChartRow, type MixRow } from "../charts";
+import {
+  renderBeeswarm,
+  renderHBarChart,
+  renderMixChart,
+  renderPositionStrips,
+  renderVelocityStrip,
+  type ChartRow,
+  type MixRow,
+} from "../charts";
+import type { MeasuredThrow } from "../../../storage/db";
 
 /** Counts non-overlapping occurrences of needle in haystack. */
 function countOf(haystack: string, needle: string): number {
@@ -92,5 +101,44 @@ describe("renderHBarChart", () => {
     const svg = renderHBarChart(makeRows(["x".repeat(120)]), "plays", "test");
     // Gutter clamps to a third of the 700-unit width.
     expect(barStartX(svg)).toBeLessThanOrEqual(233);
+  });
+});
+
+describe("mph axis clamping", () => {
+  function makeThrow(velocity: number): MeasuredThrow {
+    return { fielderName: "Test Arm", position: "RF", base: "Home", velocity };
+  }
+
+  /** Extracts every bee-dot cx from a rendered chart. */
+  function beeXs(svg: string): number[] {
+    return [...svg.matchAll(/class="bee" cx="(\d+(?:\.\d+)?)"/g)].map((m) =>
+      Number(m[1]),
+    );
+  }
+
+  test("beeswarm pins out-of-domain velocities to the axis edges", () => {
+    const svg = renderBeeswarm([makeThrow(200), makeThrow(1)], "test");
+    for (const cx of beeXs(svg)) {
+      expect(cx).toBeGreaterThanOrEqual(8);
+      expect(cx).toBeLessThanOrEqual(692);
+    }
+  });
+
+  test("position strips pin out-of-domain velocities to the axis edges", () => {
+    const svg = renderPositionStrips([makeThrow(200), makeThrow(1)], "test");
+    for (const cx of beeXs(svg)) {
+      expect(cx).toBeGreaterThanOrEqual(40);
+      expect(cx).toBeLessThanOrEqual(692);
+    }
+  });
+
+  test("velocity strip pins dots and the max label inside the frame", () => {
+    const svg = renderVelocityStrip([1, 200], { min: 1, max: 200 }, "test");
+    const xs = [...svg.matchAll(/cx="(\d+(?:\.\d+)?)"/g)].map((m) => Number(m[1]));
+    expect(xs.length).toBeGreaterThan(0);
+    for (const cx of xs) {
+      expect(cx).toBeGreaterThanOrEqual(30);
+      expect(cx).toBeLessThanOrEqual(380);
+    }
   });
 });

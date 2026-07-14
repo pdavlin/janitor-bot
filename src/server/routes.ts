@@ -40,6 +40,7 @@ import {
   queryCannonRankings,
   queryMeasuredThrows,
   queryVelocitySummary,
+  velocitySummaryFromThrows,
   queryFielderProfile,
 } from "../storage/db";
 import type { SchedulerStatus } from "../daemon/scheduler";
@@ -458,10 +459,13 @@ function handleHighlightsPage(
  * GET /season
  *
  * Season stats page: four charts, the arm leaderboard, and the
- * teams-most-burned list, computed from the DB at request time.
+ * teams-most-burned list, computed from the DB at request time. The
+ * velocity summary is derived from the measured-throw list already
+ * fetched for the beeswarm, not queried a second time.
  */
 function handleSeasonPage(ctx: HandlerContext): Response {
   const dbStats = getDbStats(ctx.db, ctx.dbPath);
+  const throws = queryMeasuredThrows(ctx.db);
   return htmlResponse(
     renderSeasonPage({
       totalPlays: dbStats.totalPlays,
@@ -475,8 +479,8 @@ function handleSeasonPage(ctx: HandlerContext): Response {
       teamsBurned: queryTeamsMostBurned(ctx.db),
       lanes: queryThrowLanes(ctx.db),
       cannons: queryCannonRankings(ctx.db),
-      throws: queryMeasuredThrows(ctx.db),
-      velocity: queryVelocitySummary(ctx.db),
+      throws,
+      velocity: velocitySummaryFromThrows(throws, dbStats.totalPlays),
     }),
   );
 }
